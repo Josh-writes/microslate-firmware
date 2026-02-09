@@ -1,0 +1,19 @@
+{
+  "keyboard_layout": "us_international",
+  "auto_save_interval": 30,
+  "default_font_size": 18,
+  "refresh_mode": "fast",
+  "key_mappings": {
+    "ctrl_s": "save_file",
+    "ctrl_n": "new_file", 
+    "ctrl_o": "open_file",
+    "ctrl_q": "quit_editor",
+    "f1": "help_menu",
+    "f2": "toggle_word_wrap"
+  },
+  "display_settings": {
+    "partial_refresh_enabled": true,
+    "full_refresh_interval": 10,
+    "contrast_level": 85
+  }
+}

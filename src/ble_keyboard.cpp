@@ -24,7 +24,6 @@ static BLEState bleState = BLEState::DISCONNECTED;
 static bool connectToKeyboard = false;
 static std::string keyboardAddress = "";
 static uint8_t keyboardAddressType = 0; // Track address type (public/random)
-static bool needsSecureConnection = false; // Flag to request security from bleLoop()
 static uint8_t lastReport[8] = {0};
 
 // NVS storage for persistent pairing
@@ -41,8 +40,9 @@ static constexpr unsigned long MAX_RECONNECT_DELAY = 60000;
 // Device discovery variables
 static std::vector<BleDeviceInfo> discoveredDevices;
 static bool isScanning = false;
-static uint32_t scanStartMs = 0;  // NEW: for tracking scan age
-static constexpr uint32_t DEVICE_STALE_MS = 8000; // 8s stale timeout
+static bool continuousScanning = false; // Keep restarting scan while in BT settings
+static uint32_t scanStartMs = 0;
+static constexpr uint32_t DEVICE_STALE_MS = 20000; // 20s stale timeout (generous)
 
 // NEW: helper function to upsert device
 static void upsertDevice(const BleDeviceInfo& info) {
@@ -134,17 +134,22 @@ static class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
 // Static client callback - no heap allocation
 static class ClientCallbacks : public NimBLEClientCallbacks {
   void onConnect(NimBLEClient* pclient) override {
-    Serial.println("BLE client connected, will request security from main loop...");
+    Serial.println("BLE client connected, requesting security...");
     bleState = BLEState::CONNECTING;
-    // Set flag so bleLoop() calls secureConnection() outside callback context
-    needsSecureConnection = true;
+    // Call secureConnection() here in the NimBLE task context.
+    // This keeps the main loop free to display the passkey on screen.
+    // NimBLE's SMP runs through the controller, not the host event loop,
+    // so this does not deadlock.
+    if (!pclient->secureConnection()) {
+      Serial.println("secureConnection() returned false");
+      // Don't disconnect here - onAuthenticationComplete will handle it
+    }
   }
 
   void onDisconnect(NimBLEClient* pclient) override {
     bleState = BLEState::DISCONNECTED;
     pInputReportChar = nullptr;
     pRemoteService = nullptr;
-    needsSecureConnection = false;
     memset(lastReport, 0, 8);
     lastReconnectAttempt = millis();
     Serial.println("BLE keyboard disconnected");
@@ -358,16 +363,17 @@ void bleSetup() {
 }
 
 void bleLoop() {
-  // Handle deferred secureConnection() call (moved out of onConnect callback)
-  if (needsSecureConnection && pClient && pClient->isConnected()) {
-    needsSecureConnection = false;
-    Serial.println("Requesting secure connection from main loop...");
-    if (!pClient->secureConnection()) {
-      Serial.println("secureConnection() failed");
-      bleState = BLEState::DISCONNECTED;
-      pClient->disconnect();
-      return;
-    }
+  // Auto-restart scan if it expired and continuous scanning is active
+  if (isScanning && continuousScanning && !NimBLEDevice::getScan()->isScanning()) {
+    Serial.println("[BLE] Scan expired, restarting...");
+    NimBLEDevice::getScan()->clearResults();
+    NimBLEDevice::getScan()->start(15, false);
+    scanStartMs = millis();
+  }
+
+  // Sync isScanning flag with actual NimBLE state
+  if (isScanning && !continuousScanning && !NimBLEDevice::getScan()->isScanning()) {
+    isScanning = false;
   }
 
   // Attempt connection if requested
@@ -405,9 +411,21 @@ BLEState getConnectionState() {
   return bleState;
 }
 
-void startDeviceScan() {
-  NimBLEDevice::getScan()->stop();
+void cancelPendingConnection() {
+  connectToKeyboard = false;
+  if (pClient && pClient->isConnected() && bleState == BLEState::CONNECTING) {
+    pClient->disconnect();
+  }
+  if (bleState == BLEState::CONNECTING) {
+    bleState = BLEState::DISCONNECTED;
+  }
+}
 
+void startDeviceScan() {
+  // Cancel any pending connection that would block the scan
+  cancelPendingConnection();
+
+  NimBLEDevice::getScan()->stop();
   discoveredDevices.clear();
   NimBLEDevice::getScan()->clearResults();
 
@@ -417,15 +435,16 @@ void startDeviceScan() {
   scan->setAdvertisedDeviceCallbacks(&scanCallbacks, true);
   scan->setActiveScan(true);
 
-  scan->start(15, false);  // 15 second non-blocking scan
+  scan->start(15, false);  // 15 second non-blocking scan, auto-restarted by bleLoop()
   isScanning = true;
-  Serial.println("[BLE] Started BLE device scan");
-  Serial.printf("[BLE] isScanning=%d scanRunning=%d\n", isScanning, NimBLEDevice::getScan()->isScanning());
+  continuousScanning = true;
+  Serial.println("[BLE] Started continuous BLE device scan");
 }
 
 void stopDeviceScan() {
   NimBLEDevice::getScan()->stop();
   isScanning = false;
+  continuousScanning = false;
 }
 
 int getDiscoveredDeviceCount() {
@@ -447,9 +466,8 @@ void connectToDevice(int deviceIndex) {
     return;
   }
 
-  if (isScanning) {
-    stopDeviceScan();
-  }
+  // Stop continuous scanning before connecting
+  stopDeviceScan();
 
   if (pClient && pClient->isConnected()) {
     pClient->disconnect();
@@ -509,9 +527,9 @@ uint32_t getScanAgeMs() {
 }
 
 void refreshScanNow() {
-  NimBLEDevice::getScan()->stop();
-  NimBLEDevice::getScan()->clearResults();
+  stopDeviceScan();
   discoveredDevices.clear();
+  NimBLEDevice::getScan()->clearResults();
   startDeviceScan();
 }
 

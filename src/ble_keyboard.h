@@ -38,7 +38,8 @@ void clearStoredDevice();
 uint32_t getCurrentPasskey();
 
 // Bluetooth scanning status functions
-bool isDeviceScanning();       // NEW
-uint32_t getScanAgeMs();       // NEW
-void refreshScanNow();         // NEW: stop/clear/restart scan
-void clearAllBluetoothBonds(); // NEW: delete all stored bonds
+bool isDeviceScanning();
+uint32_t getScanAgeMs();
+void refreshScanNow();
+void clearAllBluetoothBonds();
+void cancelPendingConnection();

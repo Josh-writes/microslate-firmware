@@ -351,18 +351,14 @@ static void dispatchEvent(const KeyEvent& event) {
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ENTER) {
-        if (isDeviceScanning()) {
-          // If scanning, refresh the scan
-          refreshScanNow();
-        } else {
-          if (deviceCount > 0) {
-            // Connect to the selected device
-            connectToDevice(bluetoothDeviceSelection);
-          } else {
-            // If no devices found, start scanning
-            startDeviceScan();
-          }
+        if (deviceCount > 0) {
+          // Connect to the selected device (stops scanning automatically)
+          connectToDevice(bluetoothDeviceSelection);
+        } else if (!isDeviceScanning()) {
+          // No devices and not scanning — start scan
+          startDeviceScan();
         }
+        // If scanning with no devices yet, Enter does nothing (just wait)
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_LEFT) {
         // Option to disconnect current device

@@ -388,20 +388,33 @@ void loop() {
   }
 
   // Control auto-reconnect based on UI state
+  static UIState lastState = UIState::MAIN_MENU;
   if (currentState == UIState::BLUETOOTH_SETTINGS) {
     autoReconnectEnabled = false;
+    // On first entry to BT settings, cancel pending connections and auto-start scan
+    if (lastState != UIState::BLUETOOTH_SETTINGS) {
+      cancelPendingConnection();
+      if (!isDeviceScanning()) {
+        startDeviceScan();
+      }
+    }
   } else {
     autoReconnectEnabled = true;
+    // Stop scanning when leaving BT settings
+    if (lastState == UIState::BLUETOOTH_SETTINGS && isDeviceScanning()) {
+      stopDeviceScan();
+    }
   }
+  lastState = currentState;
 
   // Process BLE for connection handling in all states
   bleLoop();
 
-  // Periodically refresh Bluetooth settings screen during scanning so names appear
+  // Periodically refresh Bluetooth settings screen so device list stays current
   if (currentState == UIState::BLUETOOTH_SETTINGS) {
     static unsigned long lastBtRefresh = 0;
     unsigned long now = millis();
-    if (now - lastBtRefresh >= 2000) {
+    if (now - lastBtRefresh >= 1500) {
       lastBtRefresh = now;
       screenDirty = true;
     }

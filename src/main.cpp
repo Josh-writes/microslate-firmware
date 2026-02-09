@@ -119,18 +119,49 @@ static void processPhysicalButtons() {
   bool btnConfirm = gpio.wasPressed(HalGPIO::BTN_CONFIRM);
   bool btnBack = gpio.wasPressed(HalGPIO::BTN_BACK);
 
-  // Power button handling: distinguish between short tap and long press
-  // Short tap (released quickly): go to main menu
-  // Long press (held >5s): handled in main loop for sleep
-  if (gpio.wasReleased(HalGPIO::BTN_POWER)) {
-    unsigned long heldTime = gpio.getHeldTime();
-    // Only trigger short press action if it was a quick tap (not a long press)
-    if (heldTime < 1000) {
+  // Power button state machine for proper long/short press handling
+  static bool powerHeld = false;
+  static unsigned long powerPressStart = 0;
+  static bool sleepTriggered = false;
+  
+  bool btnPower = gpio.isPressed(HalGPIO::BTN_POWER);
+  
+  if (btnPower && !powerHeld) {
+    // Button just pressed
+    powerHeld = true;
+    sleepTriggered = false;
+    powerPressStart = millis();
+  }
+
+  if (btnPower && powerHeld && !sleepTriggered) {
+    if (millis() - powerPressStart > 5000) {
+      sleepTriggered = true;
+      Serial.println("Entering sleep mode");
+      // Save any unsaved work before sleeping
       if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) {
         saveCurrentFile();
       }
-      currentState = UIState::MAIN_MENU;
-      screenDirty = true;
+      // Prepare for sleep
+      display.deepSleep();
+      gpio.startDeepSleep();
+      return; // Exit early to prevent further processing
+    }
+  }
+
+  if (!btnPower && powerHeld) {
+    // Button released
+    unsigned long duration = millis() - powerPressStart;
+    powerHeld = false;
+
+    if (!sleepTriggered && duration > 50 && duration < 1000) {
+      // Short press - go to main menu (except when already there)
+      if (currentState != UIState::MAIN_MENU) {
+        if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) {
+          saveCurrentFile();
+        }
+        currentState = UIState::MAIN_MENU;
+        screenDirty = true;
+      }
     }
   }
 
@@ -268,15 +299,21 @@ static void processPhysicalButtons() {
   btnBackLast = btnBack;
 }
 
+// Global variable for activity tracking
+static unsigned long lastActivityTime = 0;
+const unsigned long IDLE_TIMEOUT = 10UL * 60UL * 1000UL; // 10 minutes
+
+void registerActivity() {
+  lastActivityTime = millis();
+}
+
 void loop() {
   // --- GPIO first: always poll buttons before anything else ---
   gpio.update();
 
-  // --- Deep sleep check: power button held for 5 seconds ---
-  // This runs BEFORE bleLoop() which can block, matching crosspoint's pattern
-  if (gpio.isPressed(HalGPIO::BTN_POWER) && gpio.getHeldTime() > 5000) {
-    enterDeepSleep();
-    return;  // Never reached
+  // Register activity if any button is pressed
+  if (gpio.wasAnyPressed()) {
+    registerActivity();
   }
 
   // Control auto-reconnect based on UI state
@@ -300,7 +337,25 @@ void loop() {
   }
 
   processPhysicalButtons();
-  processAllInput();
+  int inputEventsProcessed = processAllInput(); // Assuming this returns number of events processed
   updateScreen();
+  
+  // Register activity if any input was processed
+  if (inputEventsProcessed > 0 || gpio.wasAnyPressed()) {
+    registerActivity();
+  }
+  
+  // Check for idle timeout
+  if (millis() - lastActivityTime > IDLE_TIMEOUT) {
+    Serial.println("Entering sleep mode due to inactivity");
+    // Save any unsaved work before sleeping
+    if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) {
+      saveCurrentFile();
+    }
+    // Prepare for sleep
+    display.deepSleep();
+    gpio.startDeepSleep();
+  }
+  
   delay(10);
 }

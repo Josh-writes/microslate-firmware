@@ -299,7 +299,7 @@ uint32_t getCurrentPasskey() {
 void bleSetup() {
   NimBLEDevice::init("MicroSlate");
   NimBLEDevice::setSecurityAuth(true, true, true); // Enable bonding, MITM protection
-  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_YESNO); // Set IO capabilities for numeric comparison
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY); // Set IO capabilities for keyboard display pairing
   NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID); // Set key distribution
   NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID); // Set key distribution
   NimBLEDevice::setSecurityCallbacks(new BleSecurityCallback());

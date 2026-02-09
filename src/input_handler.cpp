@@ -371,9 +371,12 @@ static void dispatchEvent(const KeyEvent& event) {
   }
 }
 
-void processAllInput() {
+int processAllInput() {
+  int processedCount = 0;
   while (!isQueueEmpty()) {
     KeyEvent event = dequeueKeyEvent();
     dispatchEvent(event);
+    processedCount++;
   }
+  return processedCount;
 }

@@ -154,10 +154,10 @@ static class ClientCallbacks : public NimBLEClientCallbacks {
 
 static class BleSecurityCallback : public NimBLESecurityCallbacks {
   uint32_t onPassKeyRequest() override {
-    uint32_t passkey = (uint32_t)(random(100000, 999999));
-    currentPasskey = passkey;
-    Serial.printf("[BLE] Display passkey: %06lu\n", passkey);
-    return passkey;
+    // For DISPLAY_ONLY, we should typically *display* the passkey we are notified of,
+    // not generate one here. If this gets called, log it for debugging.
+    Serial.println("[BLE] PassKeyRequest received (unexpected for DISPLAY_ONLY)");
+    return 0;
   }
 
   void onPassKeyNotify(uint32_t passkey) override {
@@ -176,7 +176,7 @@ static class BleSecurityCallback : public NimBLESecurityCallbacks {
   }
 
   void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
-    Serial.printf("[BLE] Auth complete: enc=%d bond=%d auth=%d\n",
+    Serial.printf("[BLE] Auth complete: status enc=%d bond=%d auth=%d\n",
                   desc->sec_state.encrypted,
                   desc->sec_state.bonded,
                   desc->sec_state.authenticated);

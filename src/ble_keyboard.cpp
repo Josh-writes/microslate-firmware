@@ -42,7 +42,7 @@ static std::vector<BleDeviceInfo> discoveredDevices;
 static bool isScanning = false;
 static bool continuousScanning = false;
 static uint32_t scanStartMs = 0;
-static constexpr uint32_t DEVICE_STALE_MS = 20000;
+static constexpr uint32_t DEVICE_STALE_MS = 10000;  // 10 seconds - reduced to prevent UI slowdown
 
 // FreeRTOS connect task
 static TaskHandle_t connectTaskHandle = nullptr;
@@ -163,11 +163,17 @@ static class BleSecurityCallback : public NimBLESecurityCallbacks {
   void onPassKeyNotify(uint32_t passkey) override {
     currentPasskey = passkey;
     Serial.printf("[BLE] Passkey notify: %06lu\n", passkey);
+    // Force immediate screen update to show passkey
+    extern bool screenDirty;
+    screenDirty = true;
   }
 
   bool onConfirmPIN(uint32_t passkey) override {
     Serial.printf("[BLE] Confirm PIN: %06lu\n", passkey);
     currentPasskey = passkey;
+    // Force immediate screen update to show passkey
+    extern bool screenDirty;
+    screenDirty = true;
     return true;
   }
 
@@ -189,6 +195,9 @@ static class BleSecurityCallback : public NimBLESecurityCallbacks {
       Serial.println("[BLE] Auth failed - not encrypted");
     }
     currentPasskey = 0;
+    // Force screen update to clear passkey display
+    extern bool screenDirty;
+    screenDirty = true;
   }
 } securityCallback;
 
@@ -392,8 +401,17 @@ void bleLoop() {
   // Auto-restart scan if expired and continuous mode active
   if (isScanning && continuousScanning && !NimBLEDevice::getScan()->isScanning()) {
     NimBLEDevice::getScan()->clearResults();
-    NimBLEDevice::getScan()->start(15, false);
+    NimBLEDevice::getScan()->start(5, false);  // Reduced from 15s to 5s
     scanStartMs = millis();
+    Serial.println("[BLE] Restarting scan cycle");
+  }
+
+  // Check for scan timeout to prevent infinite scanning
+  if (isScanning && (millis() - scanStartMs > 25000)) { // 25 seconds max (5s longer than stale timeout)
+    Serial.println("[BLE] Scan timeout - stopping scan after 25s");
+    NimBLEDevice::getScan()->stop();
+    isScanning = false;
+    continuousScanning = false;
   }
 
   // Sync isScanning with actual NimBLE state
@@ -458,11 +476,11 @@ void startDeviceScan() {
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setAdvertisedDeviceCallbacks(&scanCallbacks, true);
   scan->setActiveScan(true);
-  scan->start(15, false);
+  scan->start(5, false);  // Reduced from 15s to 5s for more responsive UI
 
   isScanning = true;
   continuousScanning = true;
-  Serial.println("[BLE] Started continuous scan");
+  Serial.println("[BLE] Started continuous scan (5s cycles)");
 }
 
 void stopDeviceScan() {

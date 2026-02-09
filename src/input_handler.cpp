@@ -329,33 +329,39 @@ static void dispatchEvent(const KeyEvent& event) {
 
     case UIState::BLUETOOTH_SETTINGS: {
       int deviceCount = getDiscoveredDeviceCount();
-      
+
       // Ensure selection is within bounds
       if (bluetoothDeviceSelection >= deviceCount && deviceCount > 0) {
         bluetoothDeviceSelection = deviceCount - 1;
       } else if (deviceCount == 0) {
         bluetoothDeviceSelection = 0; // Reset to 0 when no devices
       }
-      
+
       if (event.keyCode == HID_KEY_ESCAPE) {
+        Serial.println("[INPUT] BT: Escape pressed - returning to settings");
         currentState = UIState::SETTINGS;
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_DOWN) {
         if (deviceCount > 0) {
           bluetoothDeviceSelection = (bluetoothDeviceSelection + 1) % deviceCount;
+          Serial.printf("[INPUT] BT: Down pressed - selection now %d/%d\n", bluetoothDeviceSelection, deviceCount);
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_UP) {
         if (deviceCount > 0) {
           bluetoothDeviceSelection = (bluetoothDeviceSelection - 1 + deviceCount) % deviceCount;
+          Serial.printf("[INPUT] BT: Up pressed - selection now %d/%d\n", bluetoothDeviceSelection, deviceCount);
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ENTER) {
+        Serial.printf("[INPUT] BT: Enter pressed - deviceCount=%d, scanning=%d\n", deviceCount, isDeviceScanning());
         if (deviceCount > 0) {
           // Connect to the selected device (stops scanning automatically)
+          Serial.printf("[INPUT] BT: Connecting to device %d\n", bluetoothDeviceSelection);
           connectToDevice(bluetoothDeviceSelection);
         } else if (!isDeviceScanning()) {
           // No devices and not scanning — start scan
+          Serial.println("[INPUT] BT: Starting scan");
           startDeviceScan();
         }
         // If scanning with no devices yet, Enter does nothing (just wait)
@@ -363,6 +369,7 @@ static void dispatchEvent(const KeyEvent& event) {
       } else if (event.keyCode == HID_KEY_LEFT) {
         // Option to disconnect current device
         if (isKeyboardConnected()) {
+          Serial.println("[INPUT] BT: Left pressed - disconnecting device");
           disconnectCurrentDevice();
           screenDirty = true;
         }

@@ -115,6 +115,7 @@ static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
 // Auto-connect only happens for stored devices via bleLoop()
 class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
   void onResult(NimBLEAdvertisedDevice* dev) override {
+    Serial.println("[BLE] onResult()"); // DEBUG: confirm callback is firing
     // Update device list in real time
     BleDeviceInfo info;
     info.address = dev->getAddress().toString();
@@ -408,12 +409,14 @@ void startDeviceScan() {
   scanStartMs = millis();
 
   NimBLEScan* scan = NimBLEDevice::getScan();
-  scan->setAdvertisedDeviceCallbacks(new ScanCallbacks());  // NEW: set callback
+  // Set the callback again to ensure it's active for this scan
+  scan->setAdvertisedDeviceCallbacks(new ScanCallbacks());
   scan->setActiveScan(true);
 
   scan->start(15, false);  // 15 second non-blocking scan
   isScanning = true;
-  Serial.println("Started BLE device scan");
+  Serial.println("[BLE] Started BLE device scan");
+  Serial.printf("[BLE] isScanning=%d scanRunning=%d\n", isScanning, NimBLEDevice::getScan()->isScanning());
 }
 
 void stopDeviceScan() {

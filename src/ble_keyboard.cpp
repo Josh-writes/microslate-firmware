@@ -81,24 +81,44 @@ static void pruneStaleDevices() {
 // Keyboard notification callback
 static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
                               uint8_t* pData, size_t length, bool isNotify) {
-  if (length < 8) return;
+  // Keyboard reports can be 7 or 8 bytes
+  // 8-byte: [Modifiers] [Reserved] [Key1-Key6]  (standard)
+  // 7-byte: [Modifiers] [Key1-Key6]              (compact, used by Keys-To-Go 2)
+
+  if (length != 7 && length != 8) {
+    Serial.printf("[KB-Notify] Unexpected length %d, skipping\n", length);
+    return;
+  }
 
   uint8_t modifiers = pData[0];
-  uint8_t newReport[8];
-  memcpy(newReport, pData, 8);
+  uint8_t newReport[8] = {0};
+
+  // Normalize to 8-byte format: [Mod] [Reserved=0] [Key1-Key6]
+  if (length == 8) {
+    // Already 8-byte format
+    memcpy(newReport, pData, 8);
+  } else {
+    // 7-byte format: convert to 8-byte by inserting reserved byte
+    newReport[0] = pData[0];  // Modifiers
+    newReport[1] = 0;          // Reserved
+    memcpy(&newReport[2], &pData[1], 6);  // Key codes
+  }
 
   Serial.print("KB: ");
-  for (int i = 0; i < 8; i++) Serial.printf("%02X ", pData[i]);
+  for (int i = 0; i < 8; i++) Serial.printf("%02X ", newReport[i]);
   Serial.println();
 
-  // Detect newly pressed keys
+  // Detect newly pressed keys (bytes 2-7 in normalized format)
   for (int i = 2; i < 8; i++) {
     if (newReport[i] == 0) continue;
     bool wasPressed = false;
     for (int j = 2; j < 8; j++) {
       if (lastReport[j] == newReport[i]) { wasPressed = true; break; }
     }
-    if (!wasPressed) enqueueKeyEvent(newReport[i], modifiers, true);
+    if (!wasPressed) {
+      Serial.printf("  KEY PRESS: 0x%02X mod=0x%02X\n", newReport[i], modifiers);
+      enqueueKeyEvent(newReport[i], modifiers, true);
+    }
   }
 
   // Detect released keys
@@ -108,7 +128,10 @@ static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
     for (int j = 2; j < 8; j++) {
       if (newReport[j] == lastReport[i]) { stillPressed = true; break; }
     }
-    if (!stillPressed) enqueueKeyEvent(lastReport[i], modifiers, false);
+    if (!stillPressed) {
+      Serial.printf("  KEY RELEASE: 0x%02X\n", lastReport[i]);
+      enqueueKeyEvent(lastReport[i], modifiers, false);
+    }
   }
 
   memcpy(lastReport, newReport, 8);
@@ -218,9 +241,20 @@ static bool setupHidConnection() {
     return false;
   }
 
+  // Set report protocol mode FIRST (before subscribing)
+  NimBLEUUID protocolModeUUID((uint16_t)0x2a4e);  // Protocol Mode
+  NimBLERemoteCharacteristic* pProto = pRemoteService->getCharacteristic(protocolModeUUID);
+  if (pProto) {
+    uint8_t mode = 1;  // 1 = Report Protocol
+    pProto->writeValue(&mode, 1, true);
+    Serial.println("[BLE] Set Protocol Mode to Report Protocol (1)");
+  } else {
+    Serial.println("[BLE] WARNING: No Protocol Mode characteristic found");
+  }
+
   // Find input report via Report Reference descriptor (type=1 means Input)
   pInputReportChar = nullptr;
-  std::vector<NimBLERemoteCharacteristic*>* chars = pRemoteService->getCharacteristics();
+  std::vector<NimBLERemoteCharacteristic*>* chars = pRemoteService->getCharacteristics(true);  // true = refresh from device
   Serial.printf("[BLE] Found %d characteristics in HID service\n", chars->size());
 
   for (auto& chr : *chars) {
@@ -247,15 +281,29 @@ static bool setupHidConnection() {
     if (pInputReportChar) break;
   }
 
-  // Fallback: any report char with notify
+  // Fallback: subscribe to ALL notifiable report chars to find keyboard input
   if (!pInputReportChar) {
-    Serial.println("[BLE] No report ref found, trying any notifiable report char");
+    Serial.println("[BLE] No report ref found, subscribing to ALL notifiable report chars");
+    int reportCount = 0;
     for (auto& chr : *chars) {
       if (chr->getUUID() == reportUUID && chr->canNotify()) {
-        pInputReportChar = chr;
-        Serial.println("[BLE] Selected first notifiable report char");
-        break;
+        Serial.printf("[BLE] Attempting subscribe to Report handle=%d...\n", chr->getHandle());
+        if (chr->subscribe(true, onKeyboardNotify)) {
+          reportCount++;
+          Serial.printf("[BLE] SUCCESS - Subscribed to report char #%d (handle=%d)\n",
+                       reportCount, chr->getHandle());
+          if (reportCount == 1) {
+            pInputReportChar = chr;  // Keep first one as primary reference
+          }
+        } else {
+          Serial.printf("[BLE] FAILED to subscribe to report char handle=%d\n", chr->getHandle());
+        }
       }
+    }
+    if (reportCount > 0) {
+      Serial.printf("[BLE] Total: Subscribed to %d report characteristics\n", reportCount);
+    } else {
+      Serial.println("[BLE] WARNING: Failed to subscribe to any report characteristics!");
     }
   }
 
@@ -273,18 +321,17 @@ static bool setupHidConnection() {
     return false;
   }
 
-  Serial.printf("[BLE] Subscribing to char %s\n", pInputReportChar->getUUID().toString().c_str());
-  if (!pInputReportChar->subscribe(true, onKeyboardNotify)) {
-    Serial.println("[BLE] Subscribe failed");
-    return false;
-  }
-  Serial.println("[BLE] Subscribe succeeded");
-
-  // Set report protocol mode
-  NimBLERemoteCharacteristic* pProto = pRemoteService->getCharacteristic(protocolModeUUID);
-  if (pProto) {
-    uint8_t mode = 1;
-    pProto->writeValue(&mode, 1, true);
+  // If we have a specific input report char (from report ref or boot keyboard),
+  // and we haven't already subscribed to it, subscribe now
+  if (pInputReportChar->getUUID() != reportUUID || !pInputReportChar->canNotify()) {
+    Serial.printf("[BLE] Subscribing to char %s\n", pInputReportChar->getUUID().toString().c_str());
+    if (!pInputReportChar->subscribe(true, onKeyboardNotify)) {
+      Serial.println("[BLE] Subscribe failed");
+      return false;
+    }
+    Serial.println("[BLE] Subscribe succeeded");
+  } else {
+    Serial.println("[BLE] Already subscribed to report char(s)");
   }
 
   Serial.println("[BLE] HID setup complete");

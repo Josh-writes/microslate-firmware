@@ -1,273 +1,186 @@
-# MicroSlate - Dedicated Writing Device for Xteink X4
+# MicroSlate
 
-MicroSlate is a specialized firmware for the Xteink X4 e-paper device that transforms it into a dedicated writing device with Bluetooth keyboard support.
+A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with any Bluetooth keyboard and saves notes to MicroSD — no companion app, no cloud, no distractions.
 
 ## Features
 
-- **Bluetooth Keyboard Support**: Full HID keyboard functionality via BLE
-  - Manual device scanning and selection
-  - Tested with Logitech Keys-To-Go 2
-  - Supports both 7-byte and 8-byte HID report formats
-  - "Just Works" pairing (no passkey required for most keyboards)
-- **Simple Menu System**: Main menu with Browse Files, New Note, and Settings
-- **Text Editor**: Dedicated editor optimized for e-paper displays
-- **File Management**: Browse, create, rename, and edit text files
-- **Bluetooth Settings**: Device scanning, connection, and disconnection
-- **Display Orientation**: Adjustable screen orientation (Portrait, Landscape, Inverted)
-- **Text Formatting**: Configurable characters per line (20-60)
-- **MicroSD Storage**: Automatic saving to SD card in `/notes/` directory
-- **E-Paper Optimized**: Fast refresh mode for responsive typing
-- **Low Memory Footprint**: Designed to run efficiently on ESP32-C3's limited RAM
-- **Device Restart**: Hold BACK button for 5 seconds to restart
+- **Bluetooth Keyboard** — BLE HID host, connects to any standard wireless keyboard. Tested with Logitech Keys-To-Go 2.
+- **Note Management** — browse, create, rename, and delete notes from an SD card
+- **Named Notes** — each note has a title stored in the file; shown in the browser and editable without touching body text
+- **Text Editor** — cursor navigation, word-wrap, fast e-paper refresh
+- **Dark Mode** — inverted display for low-light writing
+- **Clean Mode** — hides UI chrome while editing so only your text is on screen
+- **Display Orientation** — portrait, landscape, and inverted variants
+- **Power Management** — CPU light-sleeps between events to extend battery life
+- **Standalone Build** — all libraries are bundled in the repo; no sibling projects required
 
 ## Hardware Requirements
 
-- Xteink X4 e-paper device
-- MicroSD card (FAT32 formatted)
-- External Bluetooth keyboard (physical or smartphone app)
+- Xteink X4 e-paper device (ESP32-C3, 800×480 display, physical buttons, SD slot)
+- MicroSD card formatted as FAT32
+- A Bluetooth HID keyboard
 
-## BLE HID Host Functionality
-
-MicroSlate acts as a BLE HID Host, connecting to external Bluetooth keyboards as a client. The pairing process:
-
-1. Navigate to **Settings → Bluetooth Settings** from the main menu
-2. Device performs a 5-second scan for nearby Bluetooth HID keyboards
-3. Select your keyboard from the discovered devices list (up to 10 devices shown)
-4. Device pairs using "Just Works" mode (no PIN/passkey required for most keyboards)
-5. Once connected, all keypresses are routed to the active application mode
-
-### Tested Keyboards
-
-- **Logitech Keys-To-Go 2**: Fully working (7-byte HID report format)
-- Other BLE HID keyboards should work but are untested
-
-### Bluetooth Features
-
-- **One-shot scanning**: Scan stops after 5 seconds to preserve battery and prevent ADC noise
-- **Manual re-scan**: Press Right button in Bluetooth Settings to scan again
-- **Disconnect**: Press Left button to disconnect current keyboard
-- **Auto-reconnect**: Device attempts to reconnect to last paired keyboard on startup
-
-## Building and Installation
+## Installation
 
 ### Prerequisites
 
-1. Install [PlatformIO](https://platformio.org/install/)
-2. Clone or download this repository
-3. Ensure `crosspoint-reader` sibling project is available (for shared libraries)
+- [PlatformIO](https://platformio.org/install/) (CLI or VS Code extension)
+- USB cable to connect to the Xteink X4
 
-### Dependencies
-
-The project uses libraries from the crosspoint-reader SDK:
-- **NimBLE-Arduino 1.4.3**: Bluetooth Low Energy stack
-- **GfxRenderer**: E-ink display rendering with text truncation
-- **InputManager**: Physical button debouncing with ADC
-- **SDCardManager**: MicroSD card file operations
-- **EInkDisplay**: Hardware abstraction for e-paper display
-- **Preferences**: NVS storage for paired device information
-
-Libraries are symlinked from `../crosspoint-reader/` project.
-
-### Build Instructions
+### Build and Flash
 
 ```bash
+# Clone the repository
+git clone <repo-url>
 cd xteink-writer-firmware
+
+# Build
 pio run
+
+# Build and upload (adjust port if needed)
+pio run --target upload
 ```
 
-### Upload Instructions
+The upload port defaults to `COM5` in `platformio.ini`. To override:
 
 ```bash
-# Build and upload in one command
-pio run --target upload
-
-# Or just upload if already built
-pio run --target upload --upload-port <PORT>
+pio run --target upload --upload-port /dev/ttyUSB0
 ```
 
-## Usage Instructions
+All libraries are included in the `lib/` directory. The only external dependency fetched automatically by PlatformIO is **NimBLE-Arduino** (BLE stack).
 
-### Initial Setup
+### First Boot
 
-1. Power on your Xteink X4 with MicroSlate firmware installed
-2. Insert a FAT32-formatted MicroSD card (required for file storage)
-3. Navigate to **Settings → Bluetooth Settings** from the main menu
-4. Wait for device scan to complete (5 seconds)
-5. Select your Bluetooth keyboard from the list and press Enter
-6. Once connected (status shows "Connected"), return to main menu
-7. You can now create or open files and start typing
+1. Insert a FAT32-formatted MicroSD card
+2. Power on the device — it boots to the main menu
+3. Go to **Settings → Bluetooth Settings** and scan for your keyboard
+4. Select your keyboard from the list and press Enter to pair
+5. Return to the main menu and start writing
+
+The device remembers the paired keyboard and reconnects automatically on subsequent boots.
+
+## Usage
 
 ### Main Menu
 
-MicroSlate presents a simple menu system:
-- **Browse Files**: View and select existing notes
-- **New Note**: Create a new text file
-- **Settings**: Access configuration options (future enhancement)
+| Key | Action |
+|-----|--------|
+| Up / Down | Navigate |
+| Enter | Select |
 
-Navigate using arrow keys and press Enter to select.
+Options: **Browse Notes**, **New Note**, **Settings**
 
-### File Browser Mode
+### File Browser
 
-- Shows all `.txt` files in the `/notes/` directory
-- Displays both the file title and filename
-- Use arrow keys to navigate
-- Press Enter to open a file for editing
-- Press F2 or Ctrl+R to rename a selected file
-- Press Ctrl+N to create a new file
+| Key | Action |
+|-----|--------|
+| Up / Down | Navigate list |
+| Enter | Open note |
+| Ctrl+T | Edit title of selected note |
+| Ctrl+D | Delete selected note (confirmation required) |
+| Esc | Back to main menu |
 
-### Text Editor Mode
+When delete is pending, the footer shows `Delete? Enter:Yes  Esc:No`. Press Enter to confirm or any other key to cancel.
 
-- Full keyboard support for text entry and editing
-- Use arrow keys to move cursor
-- Backspace/Delete to remove characters
-- Press Ctrl+S to save the current file
-- Press Ctrl+Q to return to file browser
+### Text Editor
 
-### File Renaming Mode
+| Key | Action |
+|-----|--------|
+| Arrow keys | Move cursor |
+| Home / End | Start / end of line |
+| Backspace / Delete | Remove characters |
+| Ctrl+S | Save |
+| Ctrl+T | Edit note title |
+| Ctrl+Z | Toggle clean mode (hides UI chrome) |
+| Esc | Save and return to file browser |
 
-- Access by pressing F2 or Ctrl+R in file browser
-- Type the new filename using your connected keyboard
-- Press Enter to confirm or Esc to cancel
+### Title Edit
 
-### Bluetooth Settings Mode
+Accessed via Ctrl+T from the file browser or editor.
 
-- Access from Settings menu
-- **Up/Down**: Navigate device list
-- **Enter**: Connect to selected device (or start scan if no devices)
-- **Right**: Re-scan for devices
-- **Left**: Disconnect current keyboard
-- **Escape**: Return to Settings menu
-- Device list shows: name, address, RSSI signal strength, and connection status
+| Key | Action |
+|-----|--------|
+| Type | Enter title text |
+| Backspace | Delete last character |
+| Enter | Confirm |
+| Esc | Cancel |
 
-### Supported Key Mappings
+### Settings
 
-**Global**
-- **Hold BACK button 5s**: Restart device (physical button on device)
+| Key | Action |
+|-----|--------|
+| Up / Down | Navigate |
+| Enter or Right | Adjust / enter submenu |
+| Left | Adjust (orientation, dark mode) |
+| Esc | Back to main menu |
 
-**Main Menu / File Browser**
-- **Up/Down**: Navigate menu/file list
-- **Enter**: Select option / Open file
-- **Ctrl+N**: Create new file
-- **Ctrl+R** or **F2**: Rename selected file
-- **Escape**: Return to previous menu
+Options:
+- **Orientation** — cycles through portrait/landscape/inverted variants
+- **Dark Mode** — toggle inverted display
+- **Bluetooth Settings** — submenu to scan and connect keyboards
+- **Clear Paired Device** — removes stored pairing from device memory
 
-**Text Editor**
-- **Arrow keys**: Move cursor
-- **Home/End**: Jump to start/end of line
-- **Backspace/Delete**: Remove characters
-- **Ctrl+S**: Save current file
-- **Ctrl+Q**: Return to file browser
+### Bluetooth Settings
 
-**Settings Menu**
-- **Up/Down**: Navigate options
-- **Left/Right**: Adjust orientation and characters per line
-- **Enter**: Select Bluetooth Settings or Back
+| Key | Action |
+|-----|--------|
+| Up / Down | Navigate device list |
+| Enter | Connect to selected device (or start scan if list is empty) |
+| Right | Re-scan for devices |
+| Left | Disconnect current keyboard |
+| Esc | Back to Settings |
 
-**Bluetooth Settings**
-- **Up/Down**: Navigate device list
-- **Enter**: Connect to device / Start scan
-- **Right**: Re-scan for devices
-- **Left**: Disconnect current keyboard
-- **Escape**: Return to Settings
+A scan runs for 5 seconds and then stops. Up to 10 nearby devices are shown with name, address, and signal strength.
 
-## Memory and Performance
+## File Format
 
-- Total application RAM: Under 200KB
-- Text buffer: 16KB capacity for larger documents
-- BLE keyboard stack: Optimized for minimal overhead
-- Display updates: Partial refresh for cursor movement
+Notes are plain `.txt` files stored in `/notes/` on the SD card. The first line is the title, followed by a blank line separator, then the body:
+
+```
+My Note Title
+
+This is the body of the note.
+It continues here...
+```
+
+Files are named `note_N_TIMESTAMP.txt` and are fully compatible with any text editor on a computer.
 
 ## Project Structure
 
-### Source Files
-
-- `src/main.cpp`: Main loop, button handling, UI orchestration
-- `src/ble_keyboard.cpp/h`: BLE scanning, pairing, HID keyboard handling
-- `src/input_handler.cpp/h`: Keyboard event queue and UI input dispatch
-- `src/text_editor.cpp/h`: Text buffer, cursor management, editing operations
-- `src/file_manager.cpp/h`: SD card file operations (browse, create, rename)
-- `src/ui_renderer.cpp/h`: Screen rendering for all UI modes
-- `src/config.h`: Global configuration and constants
-
-### Saved Files
-
-- Files are saved in the `/notes/` directory on the SD card
-- Default naming: `note_X_TIMESTAMP.txt` (where X is incrementing ID)
-- Compatible with any text editor
-- UTF-8 encoding
+```
+xteink-writer-firmware/
+├── src/
+│   ├── main.cpp          — setup, main loop, shared UI state
+│   ├── ble_keyboard.cpp  — BLE scanning, pairing, HID report handling
+│   ├── input_handler.cpp — keyboard event queue and UI state dispatch
+│   ├── text_editor.cpp   — text buffer and cursor management
+│   ├── file_manager.cpp  — SD card file operations
+│   ├── ui_renderer.cpp   — screen rendering for all UI modes
+│   └── config.h          — hardware pins, buffer sizes, constants
+├── lib/                  — all hardware/display libraries (bundled)
+│   ├── GfxRenderer/
+│   ├── EpdFont/
+│   ├── EInkDisplay/
+│   ├── hal/
+│   ├── BatteryMonitor/
+│   ├── InputManager/
+│   ├── SDCardManager/
+│   └── Utf8/
+└── platformio.ini
+```
 
 ## Troubleshooting
 
-### BLE Keyboard Issues
+**Keyboard not showing in scan**
+- Make sure the keyboard is in pairing mode and not connected to another device
+- Press Right to re-scan after switching the keyboard to pairing mode
 
-**Keyboard not appearing in scan:**
-- Ensure keyboard is in pairing mode and not connected to another device
-- Some keyboards require you to press a pairing button
-- Try re-scanning with the Right button in Bluetooth Settings
+**Physical buttons not responding**
+- BLE scanning can occasionally interfere with the ADC button reads
+- Hold the BACK button for 5 seconds to restart the device
 
-**Connection fails:**
-- Most modern keyboards use "Just Works" pairing (no PIN required)
-- If your keyboard requires a passkey, it may not be compatible yet
-- Check serial monitor output (115200 baud) for detailed connection logs
+**Display appears frozen**
+- E-paper refresh takes ~430ms — wait for it to complete before pressing more keys
 
-**Typing not working:**
-- Ensure you're in the Text Editor mode (open a file first)
-- Check connection status in Bluetooth Settings
-- Some keyboards may need to be disconnected from other devices first
-
-**Physical buttons not responding:**
-- This can happen if BLE scanning is stuck - hold BACK button for 5s to restart
-- Ensure you're not pressing buttons during screen refresh (~430ms blocking period)
-
-### Display Issues
-
-- E-paper refresh takes ~430ms in fast mode
-- Screen updates happen after most keypresses
-- If screen appears frozen, wait for refresh to complete
-- Text wraps at configured characters per line (adjustable in Settings)
-
-## Development
-
-### Architecture
-
-MicroSlate uses a modular architecture with shared UI state:
-- **Shared state** (currentState, screenDirty, etc.) defined in `main.cpp`, extern'd in modules
-- **Event-driven input**: Physical buttons and BLE keyboard both enqueue events into a common queue
-- **Non-blocking BLE**: Connection/pairing runs on FreeRTOS task to keep main loop responsive
-- **One-shot scanning**: 5-second BLE scans prevent continuous radio noise that interferes with ADC button reads
-
-### Technical Details
-
-**BLE Implementation:**
-- Uses NimBLE-Arduino 1.4.3 for low memory footprint
-- "Just Works" pairing: `setSecurityAuth(true, false, false)` + `BLE_HS_IO_NO_INPUT_OUTPUT`
-- Supports both 7-byte (compact) and 8-byte (standard) HID keyboard reports
-- Protocol Mode set to Report Protocol (1) before subscribing to characteristics
-- Subscribes to all notifiable Report characteristics (0x2a4d) to find keyboard input
-
-**Button Handling:**
-- Physical buttons use resistor ladder on ADC1 pins (GPIO 1, 2)
-- InputManager provides 5ms debounce
-- BLE scanning can cause ADC noise, hence one-shot scanning approach
-
-**Display:**
-- 800x480 physical, 480x800 logical (portrait mode)
-- Fast refresh mode: ~430ms per update (blocking)
-- Refresh triggered by screenDirty flag after UI state changes
-
-## Limitations
-
-- No EPUB or PDF reading capabilities (focus is on text editing)
-- Limited to text files only (no rich formatting)
-- BLE keyboard only (no on-screen keyboard)
-
-## Future Enhancements
-
-- **Screen refresh optimization**: Reduce refreshes during continuous typing
-- **Battery indicator**: Show device battery level
-- **Keyboard battery**: Display connected keyboard battery level
-- **File organization**: Folders, search, sorting options
-- **Text formatting**: Bold, italic, headings (if display supports partial updates)
-- **Export options**: Sync to cloud or computer
-- **Multiple keyboard support**: Quick switching between paired keyboards
-- **Customizable keybindings**: User-defined shortcuts
+**Serial monitor shows nothing on startup**
+- The ESP32-C3 USB-CDC port re-enumerates after reset; startup logs are sent before the monitor reconnects. This is normal — the device is working correctly.

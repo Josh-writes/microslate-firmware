@@ -89,9 +89,8 @@ static void updateScreen() {
 }
 
 void setup() {
-  Serial.begin(115200);
-  delay(500);
-  Serial.println("MicroSlate starting...");
+  DBG_INIT();
+  DBG_PRINTLN("MicroSlate starting...");
 
   // Reduce CPU clock — 80MHz is plenty for this workload, saves ~30% active power
   setCpuFrequencyMhz(80);
@@ -119,16 +118,16 @@ void setup() {
     };
     esp_err_t err = esp_pm_configure(&pm_config);
     if (err == ESP_OK) {
-      Serial.println("[PM] Light sleep enabled (80/40MHz)");
+      DBG_PRINTLN("[PM] Light sleep enabled (80/40MHz)");
     } else {
-      Serial.printf("[PM] Light sleep config failed: %d — running at 80MHz\n", err);
+      DBG_PRINTF("[PM] Light sleep config failed: %d — running at 80MHz\n", err);
     }
   }
 
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;
 
-  Serial.println("MicroSlate ready.");
+  DBG_PRINTLN("MicroSlate ready.");
   
   // Show a quick wake-up screen to indicate the device is starting up
   renderer.clearScreen();
@@ -162,7 +161,7 @@ void setup() {
 
 // Enter deep sleep - matches crosspoint pattern
 void enterDeepSleep(SleepReason reason) {
-  Serial.println("Entering deep sleep...");
+  DBG_PRINTLN("Entering deep sleep...");
   
   // Render the sleep screen before entering deep sleep
   renderSleepScreen();
@@ -249,7 +248,7 @@ static void processPhysicalButtons() {
   if (btnBack && backHeld && !restartTriggered) {
     if (millis() - backPressStart > 5000) {
       restartTriggered = true;
-      Serial.println("BACK held for 5s — restarting device...");
+      DBG_PRINTLN("BACK held for 5s — restarting device...");
       delay(100);
       ESP.restart();
     }
@@ -483,19 +482,26 @@ void loop() {
   int inputEventsProcessed = processAllInput(); // Assuming this returns number of events processed
 
   // Register activity AFTER button processing (don't consume button states prematurely)
-  if (gpio.wasAnyPressed() || inputEventsProcessed > 0) {
+  static unsigned long lastInputTime = 0;
+  bool hadActivity = gpio.wasAnyPressed() || inputEventsProcessed > 0;
+  if (hadActivity) {
     registerActivity();
+    lastInputTime = millis();
   }
 
-  // Rate limit screen updates to prevent excessive redraws that cause GFX spam
+  // Adaptive screen refresh: debounce rapid input, batch keystrokes into fewer redraws.
+  // - Critical updates (passkey display) bypass all rate limiting
+  // - After input: wait 100ms for more input before refreshing (batches typing)
+  // - Max 500ms between refreshes so the screen never feels unresponsive
   static unsigned long lastScreenUpdate = 0;
   unsigned long now = millis();
 
-  // Check for critical updates that need immediate display (like passkey)
   bool criticalUpdate = (currentState == UIState::BLUETOOTH_SETTINGS && getCurrentPasskey() > 0);
 
-  if (criticalUpdate || now - lastScreenUpdate > 250) { // Max 4 FPS refresh rate, critical updates bypass rate limit
-    if (screenDirty) {
+  if (screenDirty) {
+    bool debounceMet = (now - lastInputTime >= 100);        // 100ms since last input
+    bool maxIntervalMet = (now - lastScreenUpdate >= 500);   // 500ms cap
+    if (criticalUpdate || debounceMet || maxIntervalMet) {
       updateScreen();
       lastScreenUpdate = now;
     }
@@ -506,5 +512,7 @@ void loop() {
     enterDeepSleep(SleepReason::IDLE_TIMEOUT);
   }
 
-  delay(10);
+  // Adaptive delay: shorter when active (responsive), longer when idle (saves power).
+  // FreeRTOS tickless idle triggers light sleep during delay(), so longer = more sleep.
+  delay((hadActivity || screenDirty) ? 10 : 50);
 }

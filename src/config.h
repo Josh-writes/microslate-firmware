@@ -97,3 +97,18 @@ inline bool isCtrl(uint8_t mod) {
 inline bool isShift(uint8_t mod) {
   return (mod & MOD_SHIFT_LEFT) || (mod & MOD_SHIFT_RIGHT);
 }
+
+// --- Debug Logging ---
+// Define RELEASE_BUILD in platformio.ini to disable all serial output.
+// This saves significant power by keeping the UART peripheral inactive.
+#ifdef RELEASE_BUILD
+  #define DBG_INIT()
+  #define DBG_PRINTF(fmt, ...)
+  #define DBG_PRINTLN(s)
+  #define DBG_PRINT(s)
+#else
+  #define DBG_INIT()            Serial.begin(115200)
+  #define DBG_PRINTF(fmt, ...)  Serial.printf(fmt, ##__VA_ARGS__)
+  #define DBG_PRINTLN(s)        Serial.println(s)
+  #define DBG_PRINT(s)          Serial.print(s)
+#endif

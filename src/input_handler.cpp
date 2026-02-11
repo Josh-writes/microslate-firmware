@@ -362,19 +362,19 @@ static void dispatchEvent(const KeyEvent& event) {
       }
 
       if (event.keyCode == HID_KEY_ESCAPE) {
-        Serial.println("[INPUT] BT: Escape pressed - returning to settings");
+        DBG_PRINTLN("[INPUT] BT: Escape pressed - returning to settings");
         currentState = UIState::SETTINGS;
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_DOWN) {
         if (deviceCount > 0) {
           bluetoothDeviceSelection = (bluetoothDeviceSelection + 1) % deviceCount;
-          Serial.printf("[INPUT] BT: Down pressed - selection now %d/%d\n", bluetoothDeviceSelection, deviceCount);
+          DBG_PRINTF("[INPUT] BT: Down pressed - selection now %d/%d\n", bluetoothDeviceSelection, deviceCount);
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_UP) {
         if (deviceCount > 0) {
           bluetoothDeviceSelection = (bluetoothDeviceSelection - 1 + deviceCount) % deviceCount;
-          Serial.printf("[INPUT] BT: Up pressed - selection now %d/%d\n", bluetoothDeviceSelection, deviceCount);
+          DBG_PRINTF("[INPUT] BT: Up pressed - selection now %d/%d\n", bluetoothDeviceSelection, deviceCount);
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ENTER) {

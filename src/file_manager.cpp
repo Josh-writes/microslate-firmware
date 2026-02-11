@@ -64,7 +64,7 @@ static void readTitleFromFile(const char* path, char* titleOut, int maxLen) {
 
 void fileManagerSetup() {
   if (!SdMan.begin()) {
-    Serial.println("SD Card mount failed!");
+    DBG_PRINTLN("SD Card mount failed!");
     return;
   }
 
@@ -72,7 +72,7 @@ void fileManagerSetup() {
     SdMan.mkdir("/notes");
   }
 
-  Serial.println("SD Card initialized");
+  DBG_PRINTLN("SD Card initialized");
   refreshFileList();
 }
 
@@ -111,7 +111,7 @@ void refreshFileList() {
   }
   root.close();
 
-  Serial.printf("File listing: %d files found\n", fileCount);
+  DBG_PRINTF("File listing: %d files found\n", fileCount);
 }
 
 int getFileCount() { return fileCount; }
@@ -123,7 +123,7 @@ void loadFile(const char* filename) {
 
   auto file = SdMan.open(path, O_RDONLY);
   if (!file) {
-    Serial.printf("Could not open: %s\n", path);
+    DBG_PRINTF("Could not open: %s\n", path);
     return;
   }
 
@@ -164,7 +164,7 @@ void loadFile(const char* filename) {
   editorSetUnsavedChanges(false);
 
   currentState = UIState::TEXT_EDITOR;
-  Serial.printf("Loaded: %s (%d bytes)\n", filename, (int)bytesRead);
+  DBG_PRINTF("Loaded: %s (%d bytes)\n", filename, (int)bytesRead);
 }
 
 void saveCurrentFile() {
@@ -177,7 +177,7 @@ void saveCurrentFile() {
 
   auto file = SdMan.open(tmpPath, O_WRONLY | O_CREAT | O_TRUNC);
   if (!file) {
-    Serial.printf("Could not write: %s\n", tmpPath);
+    DBG_PRINTF("Could not write: %s\n", tmpPath);
     return;
   }
 
@@ -192,7 +192,7 @@ void saveCurrentFile() {
 
   editorSetUnsavedChanges(false);
   refreshFileList();
-  Serial.printf("Saved: %s\n", filename);
+  DBG_PRINTF("Saved: %s\n", filename);
 }
 
 void createNewFile() {
@@ -228,7 +228,7 @@ void createNewFile() {
   editorSetUnsavedChanges(true);
 
   // State transition is handled by the caller (goes to title edit first)
-  Serial.printf("New file: %s\n", filename);
+  DBG_PRINTF("New file: %s\n", filename);
 }
 
 // Update just the title of a file on disk without touching the body.
@@ -274,5 +274,5 @@ void deleteFile(const char* filename) {
   snprintf(path, sizeof(path), "/notes/%s", filename);
   SdMan.remove(path);
   refreshFileList();
-  Serial.printf("Deleted: %s\n", filename);
+  DBG_PRINTF("Deleted: %s\n", filename);
 }

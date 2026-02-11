@@ -231,7 +231,27 @@ void createNewFile() {
   DBG_PRINTF("New file: %s\n", filename);
 }
 
+// Convert a title to a valid FAT filename (lowercase, spaces→underscores,
+// non-alphanumeric stripped, ".txt" appended).
+static void titleToFilename(const char* title, char* out, int maxLen) {
+  int maxBase = maxLen - 5; // room for ".txt" + null
+  int j = 0;
+  for (int i = 0; title[i] != '\0' && j < maxBase; i++) {
+    char c = title[i];
+    if (c >= 'A' && c <= 'Z') c += 32;
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+      out[j++] = c;
+    } else if (c == ' ' || c == '_' || c == '-') {
+      if (j > 0 && out[j - 1] != '_') out[j++] = '_';
+    }
+  }
+  while (j > 0 && out[j - 1] == '_') j--;
+  if (j == 0) { strncpy(out, "note", maxLen - 1); j = 4; }
+  strcpy(out + j, ".txt");
+}
+
 // Update just the title of a file on disk without touching the body.
+// Also renames the file on disk to match the new title.
 // Uses the editor buffer temporarily — only call this from the file browser
 // (no active edit session).
 void updateFileTitle(const char* filename, const char* newTitle) {
@@ -266,6 +286,35 @@ void updateFileTitle(const char* filename, const char* newTitle) {
 
   SdMan.remove(path);
   SdMan.rename(tmpPath, path);
+
+  // Rename the file on disk to match the title
+  char newFilename[MAX_FILENAME_LEN];
+  titleToFilename(newTitle, newFilename, MAX_FILENAME_LEN);
+
+  if (strcmp(newFilename, filename) != 0) {
+    // Handle collisions: strip .txt suffix for base, append _2, _3 etc.
+    char base[MAX_FILENAME_LEN];
+    strncpy(base, newFilename, MAX_FILENAME_LEN - 1);
+    base[strlen(base) - 4] = '\0'; // remove ".txt"
+
+    char newPath[320];
+    snprintf(newPath, sizeof(newPath), "/notes/%s", newFilename);
+    int suffix = 2;
+    while (SdMan.exists(newPath) && suffix <= 99) {
+      snprintf(newFilename, MAX_FILENAME_LEN, "%s_%d.txt", base, suffix++);
+      snprintf(newPath, sizeof(newPath), "/notes/%s", newFilename);
+    }
+
+    char oldPath[320];
+    snprintf(oldPath, sizeof(oldPath), "/notes/%s", filename);
+    SdMan.rename(oldPath, newPath);
+
+    // Keep editor in sync if this file is currently open
+    if (strcmp(editorGetCurrentFile(), filename) == 0) {
+      editorSetCurrentFile(newFilename);
+    }
+  }
+
   refreshFileList();
 }
 

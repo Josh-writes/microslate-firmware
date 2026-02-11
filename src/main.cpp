@@ -3,6 +3,7 @@
 #include <HalGPIO.h>
 #include <GfxRenderer.h>
 #include <esp_pm.h>
+#include <Preferences.h>
 
 #include "config.h"
 #include "ble_keyboard.h"
@@ -29,6 +30,9 @@ extern bool autoReconnectEnabled;
 HalDisplay display;
 GfxRenderer renderer(display);
 HalGPIO gpio;
+
+// --- Persistent settings (NVS) ---
+static Preferences uiPrefs;
 
 // --- Shared UI state ---
 UIState currentState = UIState::MAIN_MENU;
@@ -123,6 +127,11 @@ void setup() {
       DBG_PRINTF("[PM] Light sleep config failed: %d — running at 80MHz\n", err);
     }
   }
+
+  // Load persisted UI settings from NVS
+  uiPrefs.begin("ui_prefs", false);
+  currentOrientation = static_cast<Orientation>(uiPrefs.getUChar("orient", 0));
+  darkMode = uiPrefs.getBool("darkMode", false);
 
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;
@@ -505,6 +514,16 @@ void loop() {
       updateScreen();
       lastScreenUpdate = now;
     }
+  }
+
+  // Persist UI settings to NVS when they change (NVS write only on change, not every loop)
+  static Orientation lastSavedOrientation = currentOrientation;
+  static bool lastSavedDarkMode = darkMode;
+  if (currentOrientation != lastSavedOrientation || darkMode != lastSavedDarkMode) {
+    uiPrefs.putUChar("orient", static_cast<uint8_t>(currentOrientation));
+    uiPrefs.putBool("darkMode", darkMode);
+    lastSavedOrientation = currentOrientation;
+    lastSavedDarkMode = darkMode;
   }
 
   // Check for idle timeout

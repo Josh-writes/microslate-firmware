@@ -10,7 +10,8 @@ A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with an
 - **Text Editor** — cursor navigation, word-wrap, fast e-paper refresh
 - **Auto-Save** — content is silently saved to SD card 2 seconds after you stop typing; no manual save required. Every exit path (back button, Esc, power button, sleep, restart) also saves automatically
 - **Safe Writes** — saves use a write-verify + `.bak` rotation pattern; a failed or interrupted write never destroys the previous version. Orphaned files from a crash are recovered automatically on next boot
-- **Dark Mode** — inverted display 
+- **Clean Mode** — hides all UI chrome while editing so only your text is on screen (Ctrl+Z to toggle)
+- **Dark Mode** — inverted display
 - **Display Orientation** — portrait, landscape, and inverted variants
 - **Power Management** — CPU light-sleeps between events to extend battery life
 - **Standalone Build** — all libraries are bundled in the repo; no sibling projects required

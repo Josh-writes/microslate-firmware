@@ -507,7 +507,8 @@ void loop() {
   static unsigned long lastRefreshDoneMs = 0;
   unsigned long now = millis();
 
-  bool criticalUpdate = (currentState == UIState::BLUETOOTH_SETTINGS && getCurrentPasskey() > 0);
+  // Cooldown only applies to the text editor — all menus refresh instantly for responsiveness
+  bool criticalUpdate = (currentState != UIState::TEXT_EDITOR);
 
   if (screenDirty) {
     bool cooldownMet = (now - lastRefreshDoneMs >= refreshCooldownMs(refreshSpeed));

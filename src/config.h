@@ -28,14 +28,14 @@ enum class Orientation : uint8_t {
 enum class RefreshSpeed : uint8_t {
   FAST     = 0,   // 0ms cooldown — hardware max (~2.3 refreshes/sec)
   BALANCED = 1,   // 250ms cooldown (~1.5 refreshes/sec)
-  SAVING   = 2    // 1500ms cooldown (~0.5 refreshes/sec, one refresh every ~2s)
+  SAVING   = 2    // 750ms cooldown (~0.85 refreshes/sec)
 };
 
 inline uint16_t refreshCooldownMs(RefreshSpeed speed) {
   switch (speed) {
     case RefreshSpeed::FAST:     return 0;
     case RefreshSpeed::BALANCED: return 250;
-    case RefreshSpeed::SAVING:   return 1500;
+    case RefreshSpeed::SAVING:   return 750;
     default:                     return 250;
   }
 }

@@ -20,55 +20,61 @@ static int cursorCol = 0;
 static int viewportStartLine = 0;
 static int charsPerLine = 40;
 static int storedVisibleLines = 20;  // Updated by renderer each frame
+static bool lineBreaksDirty = true;  // Only recompute line breaks when buffer/charsPerLine changes
 
 // Forward declaration
 static void ensureCursorVisible(int visibleLines);
 
-// Recalculate line breaks (word wrap)
+// Recalculate line breaks (word wrap) and cursor position.
+// The O(textLength) line break loop only runs when the buffer or charsPerLine changed.
+// Cursor line/col is always recomputed (cheap O(cursorLine) with early exit).
 void editorRecalculateLines() {
-  lineCount = 0;
-  linePositions[0] = 0;
-  lineCount = 1;
+  if (lineBreaksDirty) {
+    lineCount = 0;
+    linePositions[0] = 0;
+    lineCount = 1;
 
-  int col = 0;
-  int lastSpace = -1;
+    int col = 0;
+    int lastSpace = -1;
 
-  for (int i = 0; i < (int)textLength && lineCount < MAX_LINES; i++) {
-    if (textBuffer[i] == '\n') {
-      // Hard line break
-      if (lineCount < MAX_LINES) {
-        linePositions[lineCount] = i + 1;
-        lineCount++;
-      }
-      col = 0;
-      lastSpace = -1;
-      continue;
-    }
-
-    if (textBuffer[i] == ' ') {
-      lastSpace = i;
-    }
-
-    col++;
-    if (col >= charsPerLine) {
-      // Word wrap
-      int breakPos;
-      if (lastSpace > linePositions[lineCount - 1]) {
-        breakPos = lastSpace + 1; // Break after space
-      } else {
-        breakPos = i + 1;  // Hard break mid-word
+    for (int i = 0; i < (int)textLength && lineCount < MAX_LINES; i++) {
+      if (textBuffer[i] == '\n') {
+        // Hard line break
+        if (lineCount < MAX_LINES) {
+          linePositions[lineCount] = i + 1;
+          lineCount++;
+        }
+        col = 0;
+        lastSpace = -1;
+        continue;
       }
 
-      if (lineCount < MAX_LINES) {
-        linePositions[lineCount] = breakPos;
-        lineCount++;
+      if (textBuffer[i] == ' ') {
+        lastSpace = i;
       }
-      col = i + 1 - breakPos;
-      lastSpace = -1;
+
+      col++;
+      if (col >= charsPerLine) {
+        // Word wrap
+        int breakPos;
+        if (lastSpace > linePositions[lineCount - 1]) {
+          breakPos = lastSpace + 1; // Break after space
+        } else {
+          breakPos = i + 1;  // Hard break mid-word
+        }
+
+        if (lineCount < MAX_LINES) {
+          linePositions[lineCount] = breakPos;
+          lineCount++;
+        }
+        col = i + 1 - breakPos;
+        lastSpace = -1;
+      }
     }
+    lineBreaksDirty = false;
   }
 
-  // Compute cursor line and column
+  // Compute cursor line and column (always — cheap O(cursorLine) with early exit)
   cursorLine = 0;
   for (int i = 1; i < lineCount; i++) {
     if (cursorPosition >= linePositions[i]) {
@@ -102,6 +108,7 @@ void editorInit() {
   strncpy(currentTitle, "Untitled", MAX_TITLE_LEN - 1);
   unsavedChanges = false;
   viewportStartLine = 0;
+  lineBreaksDirty = true;
   editorRecalculateLines();
 }
 
@@ -111,6 +118,7 @@ void editorClear() {
   cursorPosition = 0;
   unsavedChanges = false;
   viewportStartLine = 0;
+  lineBreaksDirty = true;
   editorRecalculateLines();
 }
 
@@ -119,6 +127,7 @@ void editorLoadBuffer(size_t length) {
   textBuffer[textLength] = '\0';
   cursorPosition = (int)textLength;  // Start at end
   viewportStartLine = 0;
+  lineBreaksDirty = true;
   editorRecalculateLines();
   // Scroll to show cursor
   ensureCursorVisible(storedVisibleLines);
@@ -140,6 +149,7 @@ void editorInsertChar(char c) {
   textLength++;
   textBuffer[textLength] = '\0';
   unsavedChanges = true;
+  lineBreaksDirty = true;
 
   editorRecalculateLines();
   ensureCursorVisible(storedVisibleLines);
@@ -155,6 +165,7 @@ void editorDeleteChar() {
   textLength--;
   textBuffer[textLength] = '\0';
   unsavedChanges = true;
+  lineBreaksDirty = true;
 
   editorRecalculateLines();
   ensureCursorVisible(storedVisibleLines);
@@ -169,6 +180,7 @@ void editorDeleteForward() {
   textLength--;
   textBuffer[textLength] = '\0';
   unsavedChanges = true;
+  lineBreaksDirty = true;
 
   editorRecalculateLines();
   ensureCursorVisible(storedVisibleLines);
@@ -191,7 +203,7 @@ void editorMoveCursorRight() {
 }
 
 void editorMoveCursorUp() {
-  editorRecalculateLines();
+  // cursorLine/cursorCol are already valid from the previous operation
   if (cursorLine <= 0) return;
 
   int targetLine = cursorLine - 1;
@@ -207,7 +219,6 @@ void editorMoveCursorUp() {
 }
 
 void editorMoveCursorDown() {
-  editorRecalculateLines();
   if (cursorLine >= lineCount - 1) return;
 
   int targetLine = cursorLine + 1;
@@ -222,14 +233,12 @@ void editorMoveCursorDown() {
 }
 
 void editorMoveCursorHome() {
-  editorRecalculateLines();
   cursorPosition = linePositions[cursorLine];
   editorRecalculateLines();
   ensureCursorVisible(storedVisibleLines);
 }
 
 void editorMoveCursorEnd() {
-  editorRecalculateLines();
   int lineEnd;
   if (cursorLine + 1 < lineCount) {
     lineEnd = linePositions[cursorLine + 1];
@@ -244,7 +253,10 @@ void editorMoveCursorEnd() {
 }
 
 void editorSetCharsPerLine(int cpl) {
-  charsPerLine = cpl;
+  if (cpl != charsPerLine) {
+    charsPerLine = cpl;
+    lineBreaksDirty = true;
+  }
   editorRecalculateLines();
 }
 

@@ -273,7 +273,6 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
 
   // Tell editor how many lines are visible so scrolling works correctly
   editorSetVisibleLines(visibleLines);
-  editorRecalculateLines();
 
   int vpStart = editorGetViewportStart();
   int totalLines = editorGetLineCount();

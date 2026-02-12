@@ -538,5 +538,7 @@ void loop() {
 
   // Adaptive delay: shorter when active (responsive), longer when idle (saves power).
   // FreeRTOS tickless idle triggers light sleep during delay(), so longer = more sleep.
-  delay((hadActivity || screenDirty) ? 10 : 50);
+  // 20ms active aligns with BLE connection interval (30-50ms) — catches every keystroke
+  // without polling faster than BLE events arrive. 100ms idle for deeper sleep windows.
+  delay((hadActivity || screenDirty) ? 20 : 100);
 }

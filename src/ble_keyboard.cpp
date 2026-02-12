@@ -477,7 +477,7 @@ void bleSetup() {
   NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
   NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
   NimBLEDevice::setSecurityCallbacks(&securityCallback);
-  NimBLEDevice::setPower(ESP_PWR_LVL_N0);  // 0dBm — sufficient for desk-distance keyboard, saves ~1-2mA
+  NimBLEDevice::setPower(ESP_PWR_LVL_N9);  // -9dBm — lowest verified working power level
 
   prefs.begin("ble_kb", false);
 

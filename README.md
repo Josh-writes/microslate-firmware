@@ -1,6 +1,6 @@
 # MicroSlate
 
-A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with any Bluetooth keyboard and saves notes to MicroSD
+A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with any Bluetooth keyboard and saves notes to MicroSD.
 ## Features
 
 - **Bluetooth Keyboard** — BLE HID host, connects to any standard wireless keyboard. Tested with Logitech Keys-To-Go 2.

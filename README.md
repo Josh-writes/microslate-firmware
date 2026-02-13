@@ -193,16 +193,9 @@ python sync/microslate_sync.py
 
 ## File Format
 
-Notes are plain `.txt` files stored in `/notes/` on the SD card. The first line is the title, followed by a blank line separator, then the body:
+Notes are plain `.txt` files stored in `/notes/` on the SD card. Filenames are derived from the note title — spaces become underscores, everything is lowercased, and `.txt` is appended. For example, a note titled "My Note" becomes `my_note.txt`.
 
-```
-My Note Title
-
-This is the body of the note.
-It continues here...
-```
-
-Files are named `note_N_TIMESTAMP.txt` and are fully compatible with any text editor on a computer.
+Files are fully compatible with any text editor on a computer. To add notes manually, drop `.txt` files into the `/notes/` folder on the SD card — the title shown on the device is derived from the filename.
 
 ## Project Structure
 

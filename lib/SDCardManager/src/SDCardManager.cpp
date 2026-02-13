@@ -1,5 +1,4 @@
 #include "SDCardManager.h"
-#include <SPI.h>
 
 namespace {
 constexpr uint8_t SD_CS = 12;
@@ -29,8 +28,10 @@ bool SDCardManager::ready() const {
 
 void SDCardManager::sleep() {
   if (!initialized) return;
+  // Mark as sleeping — SD card enters standby naturally when CS is deasserted.
+  // Cannot call SPI.end() because the display shares the same SPI bus.
+  // ensureReady() will re-init the SD card on next access.
   initialized = false;
-  SPI.end();  // Release SPI peripheral — pins go high-Z, saves power
 }
 
 bool SDCardManager::ensureReady() {

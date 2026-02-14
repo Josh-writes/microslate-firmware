@@ -370,39 +370,57 @@ static void dispatchEvent(const KeyEvent& event) {
 
     case UIState::SETTINGS: {
       const int SETTINGS_COUNT = 7;  // Orientation, Dark Mode, Refresh Speed, Writing Mode, Blind Delay, Bluetooth, Clear Paired
-      if (event.keyCode == HID_KEY_DOWN || event.keyCode == HID_KEY_RIGHT) {
+
+      // Up/Down: navigate settings list (physical buttons also map here)
+      if (event.keyCode == HID_KEY_DOWN) {
         settingsSelection = (settingsSelection + 1) % SETTINGS_COUNT;
         screenDirty = true;
-      } else if (event.keyCode == HID_KEY_UP || event.keyCode == HID_KEY_LEFT) {
+      } else if (event.keyCode == HID_KEY_UP) {
         settingsSelection = (settingsSelection - 1 + SETTINGS_COUNT) % SETTINGS_COUNT;
         screenDirty = true;
-      } else if (event.keyCode == HID_KEY_ENTER) {
+
+      // Enter or Right: cycle setting forward
+      } else if (event.keyCode == HID_KEY_ENTER || event.keyCode == HID_KEY_RIGHT) {
         if (settingsSelection == 0) {
           int v = static_cast<int>(currentOrientation);
           currentOrientation = static_cast<Orientation>((v + 1) % 4);
-          screenDirty = true;
         } else if (settingsSelection == 1) {
           darkMode = !darkMode;
-          screenDirty = true;
         } else if (settingsSelection == 2) {
           int v = static_cast<int>(refreshSpeed);
           refreshSpeed = static_cast<RefreshSpeed>((v + 1) % 3);
-          screenDirty = true;
         } else if (settingsSelection == 3) {
           int v = static_cast<int>(writingMode);
           writingMode = static_cast<WritingMode>((v + 1) % 4);
-          screenDirty = true;
         } else if (settingsSelection == 4) {
           int v = static_cast<int>(blindDelay);
           blindDelay = static_cast<BlindDelay>((v + 1) % 4);
-          screenDirty = true;
         } else if (settingsSelection == 5) {
           currentState = UIState::BLUETOOTH_SETTINGS;
-          screenDirty = true;
         } else if (settingsSelection == 6) {
           clearAllBluetoothBonds();
-          screenDirty = true;
         }
+        screenDirty = true;
+
+      // Left: cycle setting backward (keyboard only — physical L/R map to Up/Down)
+      } else if (event.keyCode == HID_KEY_LEFT) {
+        if (settingsSelection == 0) {
+          int v = static_cast<int>(currentOrientation);
+          currentOrientation = static_cast<Orientation>((v - 1 + 4) % 4);
+        } else if (settingsSelection == 1) {
+          darkMode = !darkMode;
+        } else if (settingsSelection == 2) {
+          int v = static_cast<int>(refreshSpeed);
+          refreshSpeed = static_cast<RefreshSpeed>((v - 1 + 3) % 3);
+        } else if (settingsSelection == 3) {
+          int v = static_cast<int>(writingMode);
+          writingMode = static_cast<WritingMode>((v - 1 + 4) % 4);
+        } else if (settingsSelection == 4) {
+          int v = static_cast<int>(blindDelay);
+          blindDelay = static_cast<BlindDelay>((v - 1 + 4) % 4);
+        }
+        screenDirty = true;
+
       } else if (event.keyCode == HID_KEY_ESCAPE) {
         currentState = UIState::MAIN_MENU;
         screenDirty = true;

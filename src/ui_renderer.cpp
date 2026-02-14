@@ -608,7 +608,7 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   if (sh > bm + 30) {
     clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm, !darkMode);
     drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 12,
-                    "Arrows:Nav  L/R:Change  Enter:Select  Esc:Back", 0, !darkMode);
+                    "Arrows:Navigate  Enter:Change  Esc:Back", 0, !darkMode);
   }
 
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);

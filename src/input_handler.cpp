@@ -370,58 +370,37 @@ static void dispatchEvent(const KeyEvent& event) {
 
     case UIState::SETTINGS: {
       const int SETTINGS_COUNT = 7;  // Orientation, Dark Mode, Refresh Speed, Writing Mode, Blind Delay, Bluetooth, Clear Paired
-      if (event.keyCode == HID_KEY_DOWN) {
+      if (event.keyCode == HID_KEY_DOWN || event.keyCode == HID_KEY_RIGHT) {
         settingsSelection = (settingsSelection + 1) % SETTINGS_COUNT;
         screenDirty = true;
-      } else if (event.keyCode == HID_KEY_UP) {
+      } else if (event.keyCode == HID_KEY_UP || event.keyCode == HID_KEY_LEFT) {
         settingsSelection = (settingsSelection - 1 + SETTINGS_COUNT) % SETTINGS_COUNT;
         screenDirty = true;
-      } else if (event.keyCode == HID_KEY_RIGHT || event.keyCode == HID_KEY_ENTER) {
+      } else if (event.keyCode == HID_KEY_ENTER) {
         if (settingsSelection == 0) {
           int v = static_cast<int>(currentOrientation);
           currentOrientation = static_cast<Orientation>((v + 1) % 4);
           screenDirty = true;
-        } else if (settingsSelection == 1) {  // Dark mode toggle
+        } else if (settingsSelection == 1) {
           darkMode = !darkMode;
           screenDirty = true;
-        } else if (settingsSelection == 2) {  // Refresh speed cycle
+        } else if (settingsSelection == 2) {
           int v = static_cast<int>(refreshSpeed);
           refreshSpeed = static_cast<RefreshSpeed>((v + 1) % 3);
           screenDirty = true;
-        } else if (settingsSelection == 3) {  // Writing mode cycle
+        } else if (settingsSelection == 3) {
           int v = static_cast<int>(writingMode);
           writingMode = static_cast<WritingMode>((v + 1) % 4);
           screenDirty = true;
-        } else if (settingsSelection == 4) {  // Blind delay cycle
+        } else if (settingsSelection == 4) {
           int v = static_cast<int>(blindDelay);
           blindDelay = static_cast<BlindDelay>((v + 1) % 4);
           screenDirty = true;
-        } else if (settingsSelection == 5) {  // Bluetooth settings
+        } else if (settingsSelection == 5) {
           currentState = UIState::BLUETOOTH_SETTINGS;
           screenDirty = true;
-        } else if (settingsSelection == 6) {  // Clear paired device
+        } else if (settingsSelection == 6) {
           clearAllBluetoothBonds();
-          screenDirty = true;
-        }
-      } else if (event.keyCode == HID_KEY_LEFT) {
-        if (settingsSelection == 0) {
-          int v = static_cast<int>(currentOrientation);
-          currentOrientation = static_cast<Orientation>((v - 1 + 4) % 4);
-          screenDirty = true;
-        } else if (settingsSelection == 1) {  // Dark mode toggle
-          darkMode = !darkMode;
-          screenDirty = true;
-        } else if (settingsSelection == 2) {  // Refresh speed cycle backwards
-          int v = static_cast<int>(refreshSpeed);
-          refreshSpeed = static_cast<RefreshSpeed>((v - 1 + 3) % 3);
-          screenDirty = true;
-        } else if (settingsSelection == 3) {  // Writing mode cycle backwards
-          int v = static_cast<int>(writingMode);
-          writingMode = static_cast<WritingMode>((v - 1 + 4) % 4);
-          screenDirty = true;
-        } else if (settingsSelection == 4) {  // Blind delay cycle backwards
-          int v = static_cast<int>(blindDelay);
-          blindDelay = static_cast<BlindDelay>((v - 1 + 4) % 4);
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ESCAPE) {

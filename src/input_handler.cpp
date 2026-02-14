@@ -185,10 +185,11 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
     return;
   }
 
-  // Tab cycles writing modes: Normal → Blind → Typewriter → Pagination
+  // Tab cycles writing modes — forces immediate refresh even in blind mode
   if (keyCode == HID_KEY_TAB) {
     int v = static_cast<int>(writingMode);
     writingMode = static_cast<WritingMode>((v + 1) % 4);
+    lastKeystrokeMs = 0;
     screenDirty = true;
     return;
   }

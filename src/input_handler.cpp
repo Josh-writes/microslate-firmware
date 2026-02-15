@@ -13,6 +13,7 @@ extern bool darkMode;
 extern bool cleanMode;
 extern bool deleteConfirmPending;
 extern WritingMode writingMode;
+extern unsigned long lastKeystrokeMs;
 extern BlindDelay blindDelay;
 
 // External functions

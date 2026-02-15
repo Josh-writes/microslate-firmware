@@ -9,7 +9,7 @@ A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with an
 - **Text Editor** — cursor navigation, word-wrap, fast e-paper refresh
 - **Writing Modes** — four display modes to suit different writing styles and save battery:
   - *Scroll* — standard scrolling editor (default)
-  - *Blind* — screen shows a sunglasses graphic while typing; refreshes to show accumulated text after a configurable delay of inactivity. Biggest battery saver
+  - *Blind* — screen freezes while typing; refreshes to show accumulated text after a configurable delay of inactivity. Biggest battery saver
   - *Typewriter* — shows only the current line centered on a blank screen. Focused, distraction-free single-line writing
   - *Pagination* — page-based display instead of scrolling. Clean page flips instead of per-line scroll refreshes
 - **Auto-Save** — content is silently saved to SD card after 10 seconds of idle or every 2 minutes during continuous typing; no manual save required. Every exit path (back button, Esc, power button, sleep, restart) also saves automatically

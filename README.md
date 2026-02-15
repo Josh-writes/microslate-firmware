@@ -116,7 +116,7 @@ Auto-save runs silently after 10 seconds of idle or every 2 minutes during conti
 
 **Scroll [S]** — Standard scrolling editor. Text scrolls as the cursor moves down the page.
 
-**Blind [B]** — The screen displays a sunglasses graphic while you type. No display refreshes occur during active typing, which significantly extends battery life. After a configurable delay of inactivity (default 3 seconds), the screen refreshes to show all accumulated text. The delay is adjustable in Settings under "Blind Delay" (2s, 3s, 5s, 10s).
+**Blind [B]** — The screen freezes while you type. No display refreshes occur during active typing, which significantly extends battery life. After a configurable delay of inactivity (default 3 seconds), the screen refreshes to show all accumulated text. The delay is adjustable in Settings under "Blind Delay" (2s, 3s, 5s, 10s).
 
 **Typewriter [T]** — Only the current line is shown, centered vertically on a blank screen. When you press Enter, the previous line disappears and a fresh line appears. Text is still saved to the buffer normally. Combine with Clean Mode (Ctrl+Z) for a completely minimal writing experience.
 

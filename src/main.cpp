@@ -303,11 +303,11 @@ static void processPhysicalButtons() {
       break;
 
     case UIState::FILE_BROWSER:
-      if (((btnUp && !btnUpLast) || (btnLeft && !btnLeftLast)) && getFileCount() > 0) {
+      if (((btnUp && !btnUpLast) || (btnRight && !btnRightLast)) && getFileCount() > 0) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);
       }
-      if (((btnDown && !btnDownLast) || (btnRight && !btnRightLast)) && getFileCount() > 0) {
+      if (((btnDown && !btnDownLast) || (btnLeft && !btnLeftLast)) && getFileCount() > 0) {
         enqueueKeyEvent(HID_KEY_DOWN, 0, true);
         enqueueKeyEvent(HID_KEY_DOWN, 0, false);
       }

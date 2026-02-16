@@ -60,7 +60,7 @@ static TaskHandle_t connectTaskHandle = nullptr;
 static volatile bool authSuccess = false;
 
 // Connection timeout in seconds
-static constexpr uint8_t CONNECT_TIMEOUT_SEC = 10;
+static constexpr uint32_t CONNECT_TIMEOUT_MS = 10000;
 
 // Global variable to store the passkey for display
 static uint32_t currentPasskey = 0;
@@ -357,7 +357,7 @@ static void bleConnectTask(void* param) {
     pClient = NimBLEDevice::createClient();
     pClient->setClientCallbacks(&clientCallbacks, false);
   }
-  pClient->setConnectTimeout(CONNECT_TIMEOUT_SEC);
+  pClient->setConnectTimeout(CONNECT_TIMEOUT_MS);
 
   // Step 1: Connect (blocks this task, main loop continues)
   NimBLEAddress addr(keyboardAddress, keyboardAddressType);
@@ -561,7 +561,7 @@ void startDeviceScan() {
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setScanCallbacks(&scanCallbacks, true);
   scan->setActiveScan(true);
-  scan->start(5, false);  // One-shot 5-second scan
+  scan->start(5000, false);  // One-shot 5-second scan (2.x API takes milliseconds)
 
   isScanning = true;
   continuousScanning = false;  // One-shot: no auto-restart

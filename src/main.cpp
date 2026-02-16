@@ -3,6 +3,8 @@
 #include <HalGPIO.h>
 #include <GfxRenderer.h>
 #include <esp_pm.h>
+#include <esp_ota_ops.h>
+#include <esp_app_format.h>
 #include <Preferences.h>
 
 #include "config.h"
@@ -55,6 +57,80 @@ bool darkMode = false;
 bool cleanMode = false;
 bool deleteConfirmPending = false;
 WritingMode writingMode = WritingMode::NORMAL;
+
+// --- OTA App Detection ---
+OtaAppEntry otaApps[MAX_OTA_APPS];
+int otaAppCount = 0;
+
+// Register this app's display name in shared NVS, keyed by OTA slot number.
+static void registerOtaAppName(const char* name) {
+  const esp_partition_t* self = esp_ota_get_running_partition();
+  if (!self) return;
+  int slot = self->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_0;
+  char key[8];
+  snprintf(key, sizeof(key), "ota_%d", slot);
+  Preferences prefs;
+  prefs.begin("ota_names", false);
+  prefs.putString(key, name);
+  prefs.end();
+  DBG_PRINTF("[OTA] Registered as \"%s\" in slot %d\n", name, slot);
+}
+
+// Scan all OTA partitions (except self), check for valid firmware, populate otaApps[].
+static void detectOtaApps() {
+  otaAppCount = 0;
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  Preferences otaPrefs;
+  otaPrefs.begin("ota_names", true);  // read-only
+
+  esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP,
+                                                    ESP_PARTITION_SUBTYPE_ANY, NULL);
+  while (it != NULL && otaAppCount < MAX_OTA_APPS) {
+    const esp_partition_t* part = esp_partition_get(it);
+    if (part && part != running
+        && part->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_0
+        && part->subtype <= ESP_PARTITION_SUBTYPE_APP_OTA_15) {
+
+      esp_app_desc_t desc;
+      if (esp_ota_get_partition_description(part, &desc) == ESP_OK) {
+        int slot = part->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_0;
+        char key[8];
+        snprintf(key, sizeof(key), "ota_%d", slot);
+        String nvsName = otaPrefs.getString(key, "");
+
+        OtaAppEntry& entry = otaApps[otaAppCount];
+        if (nvsName.length() > 0) {
+          strncpy(entry.name, nvsName.c_str(), sizeof(entry.name) - 1);
+        } else {
+          snprintf(entry.name, sizeof(entry.name), "OTA Slot %d", slot);
+        }
+        entry.name[sizeof(entry.name) - 1] = '\0';
+        entry.partitionSubtype = part->subtype;
+        otaAppCount++;
+      }
+    }
+    it = esp_partition_next(it);
+  }
+  esp_partition_iterator_release(it);
+  otaPrefs.end();
+  DBG_PRINTF("[OTA] Detected %d additional app(s)\n", otaAppCount);
+}
+
+// Switch to another OTA app by index into otaApps[]. Non-static so input_handler can call it.
+void switchToOtaApp(int index) {
+  if (index < 0 || index >= otaAppCount) return;
+  int subtype = otaApps[index].partitionSubtype;
+  const esp_partition_t* target = esp_partition_find_first(
+      ESP_PARTITION_TYPE_APP,
+      static_cast<esp_partition_subtype_t>(subtype), NULL);
+  if (!target) {
+    DBG_PRINTF("[OTA] Partition subtype %d not found!\n", subtype);
+    return;
+  }
+  DBG_PRINTF("[OTA] Switching to \"%s\" (subtype %d)...\n", otaApps[index].name, subtype);
+  esp_ota_set_boot_partition(target);
+  esp_restart();
+}
 
 // --- Screen update ---
 static void updateScreen() {
@@ -145,6 +221,10 @@ void setup() {
 
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;
+
+  // Register this app's name in shared NVS and detect other OTA apps
+  registerOtaAppName("MicroSlate");
+  detectOtaApps();
 
   DBG_PRINTLN("MicroSlate ready.");
 

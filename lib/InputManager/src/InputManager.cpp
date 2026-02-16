@@ -1,4 +1,5 @@
 #include "InputManager.h"
+#include <driver/adc.h>
 
 // Recorded ADC values from real devices
 // BACK CONF LEFT RGHT   UP DOWN
@@ -28,10 +29,14 @@ InputManager::InputManager()
       buttonPressFinish(0) {}
 
 void InputManager::begin() {
-  pinMode(BUTTON_ADC_PIN_1, INPUT);
-  pinMode(BUTTON_ADC_PIN_2, INPUT);
+  // Configure ADC using ESP-IDF API directly to avoid GPIO reconfiguration
+  // that Arduino's analogRead() triggers on every call in the dual framework
+  adc1_config_width(ADC_WIDTH_BIT_12);
+  adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_12);  // GPIO 1
+  adc1_config_channel_atten(ADC1_CHANNEL_2, ADC_ATTEN_DB_12);  // GPIO 2
+
+  // Power button is digital, keep using Arduino API
   pinMode(POWER_BUTTON_PIN, INPUT_PULLUP);
-  analogSetAttenuation(ADC_11db);
 }
 
 int InputManager::getButtonFromADC(const int adcValue, const int ranges[], const int numButtons) {
@@ -47,15 +52,15 @@ int InputManager::getButtonFromADC(const int adcValue, const int ranges[], const
 uint8_t InputManager::getState() {
   uint8_t state = 0;
 
-  // Read GPIO1 buttons
-  const int adcValue1 = analogRead(BUTTON_ADC_PIN_1);
+  // Read GPIO1 buttons using ESP-IDF API (no GPIO reconfiguration overhead)
+  const int adcValue1 = adc1_get_raw(ADC1_CHANNEL_1);
   const int button1 = getButtonFromADC(adcValue1, ADC_RANGES_1, NUM_BUTTONS_1);
   if (button1 >= 0) {
     state |= (1 << button1);
   }
 
-  // Read GPIO2 buttons
-  const int adcValue2 = analogRead(BUTTON_ADC_PIN_2);
+  // Read GPIO2 buttons using ESP-IDF API
+  const int adcValue2 = adc1_get_raw(ADC1_CHANNEL_2);
   const int button2 = getButtonFromADC(adcValue2, ADC_RANGES_2, NUM_BUTTONS_2);
   if (button2 >= 0) {
     state |= (1 << (button2 + 4));

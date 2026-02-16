@@ -143,7 +143,7 @@ static void drawBattery(GfxRenderer& renderer, HalGPIO& gpio) {
 
 // Helper: draw BLE status
 static void drawBleStatus(GfxRenderer& renderer, int x, int y) {
-  const char* status;
+  const char* status = "";
   switch (getConnectionState()) {
     case BLEState::CONNECTED:    status = "KB Connected"; break;
     case BLEState::SCANNING:     status = "Scanning..."; break;
@@ -581,7 +581,7 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
   clippedLine(renderer, 5, 32, sw - 5, 32, tc);
 
   // Connection status
-  const char* status;
+  const char* status = "";
   switch (getConnectionState()) {
     case BLEState::CONNECTED:    status = "Connected to keyboard"; break;
     case BLEState::SCANNING:     status = "Scanning for devices..."; break;

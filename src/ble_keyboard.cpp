@@ -155,8 +155,8 @@ static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
 
 // --- Callbacks (static instances, no heap allocation) ---
 
-static class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
-  void onResult(NimBLEAdvertisedDevice* dev) override {
+static class ScanCallbacks : public NimBLEScanCallbacks {
+  void onResult(const NimBLEAdvertisedDevice* dev) override {
     BleDeviceInfo info;
     info.address = dev->getAddress().toString();
     info.name = dev->haveName() ? dev->getName() : info.address;
@@ -173,7 +173,7 @@ static class ClientCallbacks : public NimBLEClientCallbacks {
     // Don't call secureConnection() here - the connect task handles it
   }
 
-  void onDisconnect(NimBLEClient* pclient) override {
+  void onDisconnect(NimBLEClient* pclient, int reason) override {
     bleState = BLEState::DISCONNECTED;
     pInputReportChar = nullptr;
     pRemoteService = nullptr;
@@ -197,44 +197,26 @@ static class ClientCallbacks : public NimBLEClientCallbacks {
                                CONN_SLAVE_LATENCY, CONN_SUPERVISION_TIMEOUT);
     return true;
   }
-} clientCallbacks;
 
-static class BleSecurityCallback : public NimBLESecurityCallbacks {
-  uint32_t onPassKeyRequest() override {
-    DBG_PRINTLN("[BLE] PassKeyRequest received - returning 123456");
-    return 123456;
+  // Security callbacks (merged from NimBLESecurityCallbacks — removed in 2.x)
+  void onPassKeyEntry(NimBLEConnInfo& connInfo) override {
+    DBG_PRINTLN("[BLE] PassKeyEntry received - entering 123456");
+    NimBLEDevice::injectPassKey(connInfo, 123456);
   }
 
-  void onPassKeyNotify(uint32_t passkey) override {
-    currentPasskey = passkey;
-    DBG_PRINTF("[BLE] Passkey notify: %06lu\n", passkey);
-    // Force immediate screen update to show passkey
+  void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) override {
+    DBG_PRINTF("[BLE] Confirm passkey: %06lu - auto-accepting\n", (unsigned long)pin);
+    currentPasskey = pin;
     extern bool screenDirty;
     screenDirty = true;
+    NimBLEDevice::injectConfirmPasskey(connInfo, true);
   }
 
-  bool onConfirmPIN(uint32_t passkey) override {
-    DBG_PRINTF("[BLE] Confirm PIN: %06lu - auto-accepting\n", passkey);
-    currentPasskey = passkey;
-    // Force immediate screen update to show passkey
-    extern bool screenDirty;
-    screenDirty = true;
-    // Auto-accept like micro-journal does
-    return true;
-  }
+  void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
+    DBG_PRINTF("[BLE] Auth complete: encrypted=%d bonded=%d\n",
+               connInfo.isEncrypted(), connInfo.isBonded());
 
-  bool onSecurityRequest() override {
-    DBG_PRINTLN("[BLE] Security request - accepting");
-    return true;
-  }
-
-  void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
-    DBG_PRINTF("[BLE] Auth complete: status enc=%d bond=%d auth=%d\n",
-               desc->sec_state.encrypted,
-               desc->sec_state.bonded,
-               desc->sec_state.authenticated);
-
-    if (desc->sec_state.encrypted) {
+    if (connInfo.isEncrypted()) {
       authSuccess = true;
       DBG_PRINTLN("[BLE] Auth success");
     } else {
@@ -242,11 +224,10 @@ static class BleSecurityCallback : public NimBLESecurityCallbacks {
       DBG_PRINTLN("[BLE] Auth failed - not encrypted");
     }
     currentPasskey = 0;
-    // Force screen update to clear passkey display
     extern bool screenDirty;
     screenDirty = true;
   }
-} securityCallback;
+} clientCallbacks;
 
 // --- HID service discovery and subscription ---
 
@@ -254,7 +235,7 @@ static bool setupHidConnection() {
   if (!pClient || !pClient->isConnected()) return false;
 
   DBG_PRINTLN("[BLE] Discovering services...");
-  if (!pClient->getServices(true)) {
+  if (pClient->getServices(true).empty()) {
     DBG_PRINTLN("[BLE] Service discovery failed");
     return false;
   }
@@ -278,20 +259,20 @@ static bool setupHidConnection() {
 
   // Find input report via Report Reference descriptor (type=1 means Input)
   pInputReportChar = nullptr;
-  std::vector<NimBLERemoteCharacteristic*>* chars = pRemoteService->getCharacteristics(true);  // true = refresh from device
-  DBG_PRINTF("[BLE] Found %d characteristics in HID service\n", chars->size());
+  const auto& chars = pRemoteService->getCharacteristics(true);  // true = refresh from device
+  DBG_PRINTF("[BLE] Found %d characteristics in HID service\n", (int)chars.size());
 
-  for (auto& chr : *chars) {
+  for (auto& chr : chars) {
     DBG_PRINTF("[BLE]   Char UUID: %s, canNotify=%d\n",
                chr->getUUID().toString().c_str(), chr->canNotify());
 
     if (chr->getUUID() != reportUUID) continue;
 
-    std::vector<NimBLERemoteDescriptor*>* descs = chr->getDescriptors();
-    for (auto& d : *descs) {
+    const auto& descs = chr->getDescriptors();
+    for (auto& d : descs) {
       if (d->getUUID() == NimBLEUUID("2908")) {
-        std::string refData = d->readValue();
-        if (refData.length() >= 2) {
+        NimBLEAttValue refData = d->readValue();
+        if (refData.size() >= 2) {
           DBG_PRINTF("[BLE]     Report ref: ID=%d Type=%d\n",
                      (uint8_t)refData[0], (uint8_t)refData[1]);
           if ((uint8_t)refData[1] == 1) {
@@ -309,7 +290,7 @@ static bool setupHidConnection() {
   if (!pInputReportChar) {
     DBG_PRINTLN("[BLE] No report ref found, subscribing to ALL notifiable report chars");
     int reportCount = 0;
-    for (auto& chr : *chars) {
+    for (auto& chr : chars) {
       if (chr->getUUID() == reportUUID && chr->canNotify()) {
         DBG_PRINTF("[BLE] Attempting subscribe to Report handle=%d...\n", chr->getHandle());
         if (chr->subscribe(true, onKeyboardNotify)) {
@@ -472,13 +453,12 @@ void bleSetup() {
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
   NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
   NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
-  NimBLEDevice::setSecurityCallbacks(&securityCallback);
-  NimBLEDevice::setPower(ESP_PWR_LVL_N9);  // -9dBm — lowest verified working power level
+  NimBLEDevice::setPower(-9);  // -9dBm — lowest verified working power level
 
   prefs.begin("ble_kb", false);
 
   NimBLEScan* scan = NimBLEDevice::getScan();
-  scan->setAdvertisedDeviceCallbacks(&scanCallbacks, true);
+  scan->setScanCallbacks(&scanCallbacks, true);
   scan->setInterval(1349);
   scan->setWindow(449);
   scan->setActiveScan(true);
@@ -579,7 +559,7 @@ void startDeviceScan() {
   scanStartMs = millis();
 
   NimBLEScan* scan = NimBLEDevice::getScan();
-  scan->setAdvertisedDeviceCallbacks(&scanCallbacks, true);
+  scan->setScanCallbacks(&scanCallbacks, true);
   scan->setActiveScan(true);
   scan->start(5, false);  // One-shot 5-second scan
 

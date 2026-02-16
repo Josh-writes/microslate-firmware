@@ -782,7 +782,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
           if (is2Bit) {
             const uint8_t byte = bitmap[pixelPosition / 4];
             const uint8_t bit_index = (3 - pixelPosition % 4) * 2;
-            const uint8_t bmpVal = 3 - (byte >> bit_index) & 0x3;
+            const uint8_t bmpVal = 3 - ((byte >> bit_index) & 0x3);
 
             if (renderMode == BW && bmpVal < 3) {
               drawPixel(screenX, screenY, black);
@@ -963,7 +963,7 @@ void GfxRenderer::renderChar(const EpdFontFamily& fontFamily, const uint32_t cp,
           // the direct bit from the font is 0 -> white, 1 -> light gray, 2 -> dark gray, 3 -> black
           // we swap this to better match the way images and screen think about colors:
           // 0 -> black, 1 -> dark grey, 2 -> light grey, 3 -> white
-          const uint8_t bmpVal = 3 - (byte >> bit_index) & 0x3;
+          const uint8_t bmpVal = 3 - ((byte >> bit_index) & 0x3);
 
           if (renderMode == BW && bmpVal < 3) {
             // Black (also paints over the grays in BW mode)

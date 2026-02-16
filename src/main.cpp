@@ -32,6 +32,7 @@ HalDisplay display;
 GfxRenderer renderer(display);
 HalGPIO gpio;
 
+
 // --- Persistent settings (NVS) ---
 static Preferences uiPrefs;
 
@@ -66,7 +67,7 @@ static void updateScreen() {
   // Apply orientation
   static Orientation lastOrientation = Orientation::PORTRAIT;
   if (currentOrientation != lastOrientation) {
-    GfxRenderer::Orientation gfxOrient;
+    GfxRenderer::Orientation gfxOrient = GfxRenderer::Portrait;
     switch (currentOrientation) {
       case Orientation::PORTRAIT:      gfxOrient = GfxRenderer::Portrait; break;
       case Orientation::LANDSCAPE_CW:  gfxOrient = GfxRenderer::LandscapeClockwise; break;
@@ -102,7 +103,6 @@ void setup() {
   DBG_INIT();
   DBG_PRINTLN("MicroSlate starting...");
 
-  // Reduce CPU clock — 80MHz is plenty for this workload, saves ~30% active power
   setCpuFrequencyMhz(80);
 
   gpio.begin();
@@ -121,7 +121,7 @@ void setup() {
 
   // Apply saved orientation
   {
-    GfxRenderer::Orientation gfxOrient;
+    GfxRenderer::Orientation gfxOrient = GfxRenderer::Portrait;
     switch (currentOrientation) {
       case Orientation::PORTRAIT:      gfxOrient = GfxRenderer::Portrait; break;
       case Orientation::LANDSCAPE_CW:  gfxOrient = GfxRenderer::LandscapeClockwise; break;
@@ -140,19 +140,13 @@ void setup() {
   // CONFIG_PM_ENABLE and CONFIG_FREERTOS_USE_TICKLESS_IDLE are compiled into
   // ESP-IDF via sdkconfig.defaults (framework = arduino, espidf). BLE modem
   // sleep keeps the radio alive across sleep/wake cycles.
-  {
-    esp_pm_config_t pm_config = {
-      .max_freq_mhz      = 80,   // Never exceed 80MHz
-      .min_freq_mhz      = 10,   // Drop to XTAL frequency when idle
-      .light_sleep_enable = true
-    };
-    esp_err_t err = esp_pm_configure(&pm_config);
-    if (err == ESP_OK) {
-      DBG_PRINTLN("[PM] Light sleep enabled (80/10MHz)");
-    } else {
-      DBG_PRINTF("[PM] Light sleep config failed: %s\n", esp_err_to_name(err));
-    }
-  }
+  esp_pm_config_esp32c3_t pm_config = {
+    .max_freq_mhz = 80,
+    .min_freq_mhz = 10,
+    .light_sleep_enable = true
+  };
+  esp_err_t pm_err = esp_pm_configure(&pm_config);
+  DBG_PRINTF("PM configure: %s\n", esp_err_to_name(pm_err));
 
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;

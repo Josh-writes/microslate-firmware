@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <driver/adc.h>
 
 class InputManager {
  public:

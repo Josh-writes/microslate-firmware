@@ -13,6 +13,7 @@ extern bool darkMode;
 extern bool cleanMode;
 extern bool deleteConfirmPending;
 extern WritingMode writingMode;
+extern unsigned long lastKeystrokeMs;
 extern BlindDelay blindDelay;
 
 // External functions
@@ -330,10 +331,10 @@ static void dispatchEvent(const KeyEvent& event) {
       }
 
       if (event.keyCode == HID_KEY_DOWN && fc > 0) {
-        selectedFileIndex = (selectedFileIndex + 1) % fc;
+        selectedFileIndex = (selectedFileIndex - 1 + fc) % fc;
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_UP && fc > 0) {
-        selectedFileIndex = (selectedFileIndex - 1 + fc) % fc;
+        selectedFileIndex = (selectedFileIndex + 1) % fc;
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_ENTER && fc > 0) {
         FileInfo* files = getFileList();

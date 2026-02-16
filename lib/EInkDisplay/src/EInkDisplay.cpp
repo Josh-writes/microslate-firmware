@@ -118,7 +118,10 @@ EInkDisplay::EInkDisplay(int8_t sclk, int8_t mosi, int8_t cs, int8_t dc, int8_t 
 #ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
       frameBufferActive(nullptr),
 #endif
-      customLutActive(false) {
+      isScreenOn(false),
+      customLutActive(false),
+      inGrayscaleMode(false),
+      drawGrayscale(false) {
   if (Serial) Serial.printf("[%lu] EInkDisplay: Constructor called\n", millis());
   if (Serial) Serial.printf("[%lu]   SCLK=%d, MOSI=%d, CS=%d, DC=%d, RST=%d, BUSY=%d\n", millis(), sclk, mosi, cs, dc, rst, busy);
 }
@@ -258,13 +261,14 @@ void EInkDisplay::initDisplayController() {
   // Set up full screen RAM area
   setRamArea(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT);
 
-  if (Serial) Serial.printf("[%lu]   Clearing RAM buffers...\n", millis());
-  sendCommand(CMD_AUTO_WRITE_BW_RAM);  // Auto write BW RAM
+  // Fill both RAM banks with white so the first FAST_REFRESH has a clean baseline.
+  // These commands write internal SRAM only — no visible display refresh.
+  sendCommand(CMD_AUTO_WRITE_BW_RAM);
   sendData(0xF7);
   waitWhileBusy(" CMD_AUTO_WRITE_BW_RAM");
 
-  sendCommand(CMD_AUTO_WRITE_RED_RAM);  // Auto write RED RAM
-  sendData(0xF7);                       // Fill with white pattern
+  sendCommand(CMD_AUTO_WRITE_RED_RAM);
+  sendData(0xF7);
   waitWhileBusy(" CMD_AUTO_WRITE_RED_RAM");
 
   if (Serial) Serial.printf("[%lu]   SSD1677 controller initialized\n", millis());

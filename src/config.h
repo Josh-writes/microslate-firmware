@@ -24,50 +24,12 @@ enum class Orientation : uint8_t {
   LANDSCAPE_CCW = 3     // LandscapeCounterClockwise
 };
 
-// --- Display Refresh Speed ---
-// Controls cooldown between e-ink refreshes. Longer = more battery savings, slower visual updates.
-enum class RefreshSpeed : uint8_t {
-  FAST     = 0,   // 0ms cooldown — hardware max (~2.3 refreshes/sec)
-  BALANCED = 1,   // 250ms cooldown (~1.5 refreshes/sec)
-  SAVING   = 2    // 750ms cooldown (~0.85 refreshes/sec)
-};
-
-inline uint16_t refreshCooldownMs(RefreshSpeed speed) {
-  switch (speed) {
-    case RefreshSpeed::FAST:     return 0;
-    case RefreshSpeed::BALANCED: return 250;
-    case RefreshSpeed::SAVING:   return 750;
-    default:                     return 250;
-  }
-}
-
 // --- Writing Modes ---
-// Control how the editor renders text to reduce unnecessary e-ink refreshes.
 enum class WritingMode : uint8_t {
   NORMAL     = 0,   // Standard scrolling editor
-  BLIND      = 1,   // No refreshes while typing; refresh after inactivity delay
-  TYPEWRITER = 2,   // Shows only current line centered on screen
-  PAGINATION = 3    // Page-based display instead of scrolling
+  TYPEWRITER = 1,   // Shows only current line centered on screen
+  PAGINATION = 2    // Page-based display instead of scrolling
 };
-
-// --- Blind Mode Delay ---
-// How long to wait after last keystroke before refreshing in blind mode.
-enum class BlindDelay : uint8_t {
-  TWO_SEC   = 0,
-  THREE_SEC = 1,
-  FIVE_SEC  = 2,
-  TEN_SEC   = 3
-};
-
-inline uint16_t blindDelayMs(BlindDelay d) {
-  switch (d) {
-    case BlindDelay::TWO_SEC:   return 2000;
-    case BlindDelay::THREE_SEC: return 3000;
-    case BlindDelay::FIVE_SEC:  return 5000;
-    case BlindDelay::TEN_SEC:   return 10000;
-    default:                    return 3000;
-  }
-}
 
 // --- BLE Connection State ---
 enum class BLEState : uint8_t {

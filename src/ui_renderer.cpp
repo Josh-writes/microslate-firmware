@@ -17,7 +17,6 @@ extern bool darkMode;
 extern bool cleanMode;
 extern bool deleteConfirmPending;
 extern WritingMode writingMode;
-extern BlindDelay blindDelay;
 
 // External functions
 bool getStoredDevice(std::string& address, std::string& name);
@@ -53,7 +52,6 @@ extern int selectedFileIndex;
 extern int settingsSelection;
 extern int bluetoothDeviceSelection;
 extern Orientation currentOrientation;
-extern RefreshSpeed refreshSpeed;
 extern int charsPerLine;
 extern char renameBuffer[];
 extern int renameBufferLen;
@@ -291,7 +289,6 @@ static void drawEditorCursor(GfxRenderer& renderer, int cursorY, int lineHeight,
 // Get the mode indicator string for the current writing mode
 static const char* getModeIndicator() {
   switch (writingMode) {
-    case WritingMode::BLIND:      return "[B]";
     case WritingMode::TYPEWRITER: return "[T]";
     case WritingMode::PAGINATION: return "[P]";
     default:                      return "[S]";
@@ -408,15 +405,8 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
     return;
   }
 
-  // --- NORMAL / BLIND MODE (blind mode renders the same as normal when refresh happens) ---
-  const char* blindHint = nullptr;
-  char blindHintBuf[24];
-  if (writingMode == WritingMode::BLIND) {
-    int delaySec = blindDelayMs(blindDelay) / 1000;
-    snprintf(blindHintBuf, sizeof(blindHintBuf), "pause %ds to refresh", delaySec);
-    blindHint = blindHintBuf;
-  }
-  int textAreaTop = drawEditorHeader(renderer, gpio, sw, tc, blindHint);
+  // --- NORMAL MODE ---
+  int textAreaTop = drawEditorHeader(renderer, gpio, sw, tc);
 
   int textAreaBottom = sh - 5;
   int textAreaHeight = textAreaBottom - textAreaTop;
@@ -484,12 +474,11 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   drawBattery(renderer, gpio);
   clippedLine(renderer, 5, 32, sw - 5, 32, !darkMode);
 
-  // Setting items: Orientation, Dark Mode, Refresh Speed, Writing Mode, Blind Delay, Bluetooth, Clear Paired
+  // Setting items: Orientation, Dark Mode, Writing Mode, Bluetooth, Clear Paired
   static const char* labels[] = {
-    "Orientation", "Dark Mode", "Refresh Speed",
-    "Writing Mode", "Blind Delay", "Bluetooth", "Clear Paired"
+    "Orientation", "Dark Mode", "Writing Mode", "Bluetooth", "Clear Paired"
   };
-  const int SETTINGS_COUNT = 7;
+  const int SETTINGS_COUNT = 5;
 
   // Compute line height to fit all items — use smaller spacing if needed
   int lineH = 38;
@@ -522,26 +511,12 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
     } else if (i == 1) {
       strcpy(val, darkMode ? "Dark" : "Light");
     } else if (i == 2) {
-      switch (refreshSpeed) {
-        case RefreshSpeed::FAST:     strcpy(val, "Fast"); break;
-        case RefreshSpeed::BALANCED: strcpy(val, "Balanced"); break;
-        case RefreshSpeed::SAVING:   strcpy(val, "Battery Saver"); break;
-      }
-    } else if (i == 3) {
       switch (writingMode) {
         case WritingMode::NORMAL:     strcpy(val, "Normal"); break;
-        case WritingMode::BLIND:      strcpy(val, "Blind"); break;
         case WritingMode::TYPEWRITER: strcpy(val, "Typewriter"); break;
         case WritingMode::PAGINATION: strcpy(val, "Pagination"); break;
       }
     } else if (i == 4) {
-      switch (blindDelay) {
-        case BlindDelay::TWO_SEC:   strcpy(val, "2s"); break;
-        case BlindDelay::THREE_SEC: strcpy(val, "3s"); break;
-        case BlindDelay::FIVE_SEC:  strcpy(val, "5s"); break;
-        case BlindDelay::TEN_SEC:   strcpy(val, "10s"); break;
-      }
-    } else if (i == 6) {
       std::string storedAddr, storedName;
       if (getStoredDevice(storedAddr, storedName)) {
         snprintf(val, sizeof(val), "%s", storedName.c_str());

@@ -52,12 +52,9 @@ int renameBufferLen = 0;
 
 // UI mode flags
 bool darkMode = false;
-RefreshSpeed refreshSpeed = RefreshSpeed::BALANCED;
 bool cleanMode = false;
 bool deleteConfirmPending = false;
 WritingMode writingMode = WritingMode::NORMAL;
-BlindDelay blindDelay = BlindDelay::THREE_SEC;
-unsigned long lastKeystrokeMs = 0;
 
 // --- Screen update ---
 static void updateScreen() {
@@ -115,9 +112,7 @@ void setup() {
   uiPrefs.begin("ui_prefs", false);
   currentOrientation = static_cast<Orientation>(uiPrefs.getUChar("orient", 0));
   darkMode = uiPrefs.getBool("darkMode", false);
-  refreshSpeed = static_cast<RefreshSpeed>(uiPrefs.getUChar("refreshSpd", 1)); // default BALANCED
   writingMode = static_cast<WritingMode>(uiPrefs.getUChar("writeMode", 0));
-  blindDelay = static_cast<BlindDelay>(uiPrefs.getUChar("blindDly", 1)); // default THREE_SEC
 
   // Apply saved orientation
   {
@@ -153,34 +148,12 @@ void setup() {
 
   DBG_PRINTLN("MicroSlate ready.");
 
-  // Show a quick wake-up screen to indicate the device is starting up
+  // The display needs one FULL_REFRESH after power-on to initialize its analog
+  // circuits before FAST_REFRESH will work.
   renderer.clearScreen();
-  
-  int sw = renderer.getScreenWidth();
-  int sh = renderer.getScreenHeight();
-  
-  // Title: "MicroSlate"
-  const char* title = "MicroSlate";
-  int titleWidth = renderer.getTextAdvanceX(FONT_BODY, title);
-  int titleX = (sw - titleWidth) / 2;
-  int titleY = sh * 0.35; // 35% down the screen (moved up)
-  renderer.drawText(FONT_BODY, titleX, titleY, title, true, EpdFontFamily::BOLD);
-  
-  // Subtitle: "Starting..."
-  const char* subtitle = "Starting...";
-  int subTitleWidth = renderer.getTextAdvanceX(FONT_UI, subtitle);
-  int subTitleX = (sw - subTitleWidth) / 2;
-  int subTitleY = sh * 0.48; // 48% down the screen (moved up)
-  renderer.drawText(FONT_UI, subTitleX, subTitleY, subtitle, true);
-  
-  // Perform a full display refresh
   renderer.displayBuffer(HalDisplay::FULL_REFRESH);
-  
-  // Small delay to show the startup screen briefly
-  delay(500);
-  
-  // Clear the screen and proceed with normal UI
-  screenDirty = true; // Force a redraw of the main UI
+
+  screenDirty = true;
 }
 
 // Enter deep sleep - matches crosspoint pattern
@@ -529,9 +502,6 @@ void loop() {
   if (hadActivity) {
     registerActivity();
     lastInputTime = millis();
-    if (currentState == UIState::TEXT_EDITOR) {
-      lastKeystrokeMs = millis();
-    }
   }
 
   // Auto-save: hybrid idle + hard cap for crash protection.
@@ -560,62 +530,23 @@ void loop() {
     }
   }
 
-  // Cooldown-based screen refresh: the e-ink refresh (~430ms) IS the rate limiter.
-  // After each refresh completes, wait a configurable cooldown, then show all
-  // accumulated keystrokes at once. No artificial debounce — characters appear as
-  // fast as the display allows. Longer cooldown = fewer refreshes = more battery savings.
-  static unsigned long lastRefreshDoneMs = 0;
-  unsigned long now = millis();
-
-  // Cooldown only applies to the text editor — all menus refresh instantly for responsiveness
-  bool criticalUpdate = (currentState != UIState::TEXT_EDITOR);
-
-  // Reset blind mode keystroke timer on editor entry so the first render isn't suppressed
-  static UIState prevRefreshState = UIState::MAIN_MENU;
-  if (currentState == UIState::TEXT_EDITOR && prevRefreshState != UIState::TEXT_EDITOR) {
-    lastKeystrokeMs = 0;
-  }
-  prevRefreshState = currentState;
-
-
-
+  // The e-ink hardware refresh (~640ms) is the natural rate limiter — no cooldown needed.
   if (screenDirty) {
-    if (writingMode == WritingMode::BLIND && currentState == UIState::TEXT_EDITOR) {
-      // Blind mode: suppress refresh while typing, refresh after inactivity delay.
-      // Screen stays on whatever was last displayed until the user pauses.
-      if ((now - lastKeystrokeMs) >= blindDelayMs(blindDelay)) {
-        updateScreen();
-        lastRefreshDoneMs = millis();
-      }
-      // else: user is typing — suppress refresh, screenDirty stays true
-    } else {
-      bool cooldownMet = (now - lastRefreshDoneMs >= refreshCooldownMs(refreshSpeed));
-      if (criticalUpdate || cooldownMet) {
-        updateScreen();
-        lastRefreshDoneMs = millis();
-      }
-    }
+    updateScreen();
   }
 
   // Persist UI settings to NVS when they change (NVS write only on change, not every loop)
   static Orientation lastSavedOrientation = currentOrientation;
   static bool lastSavedDarkMode = darkMode;
-  static RefreshSpeed lastSavedRefreshSpeed = refreshSpeed;
   static WritingMode lastSavedWritingMode = writingMode;
-  static BlindDelay lastSavedBlindDelay = blindDelay;
   if (currentOrientation != lastSavedOrientation || darkMode != lastSavedDarkMode
-      || refreshSpeed != lastSavedRefreshSpeed
-      || writingMode != lastSavedWritingMode || blindDelay != lastSavedBlindDelay) {
+      || writingMode != lastSavedWritingMode) {
     uiPrefs.putUChar("orient", static_cast<uint8_t>(currentOrientation));
     uiPrefs.putBool("darkMode", darkMode);
-    uiPrefs.putUChar("refreshSpd", static_cast<uint8_t>(refreshSpeed));
     uiPrefs.putUChar("writeMode", static_cast<uint8_t>(writingMode));
-    uiPrefs.putUChar("blindDly", static_cast<uint8_t>(blindDelay));
     lastSavedOrientation = currentOrientation;
     lastSavedDarkMode = darkMode;
-    lastSavedRefreshSpeed = refreshSpeed;
     lastSavedWritingMode = writingMode;
-    lastSavedBlindDelay = blindDelay;
   }
 
   // Check for idle timeout (skip while WiFi sync is active)

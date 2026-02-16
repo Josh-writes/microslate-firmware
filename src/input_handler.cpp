@@ -13,8 +13,6 @@ extern bool darkMode;
 extern bool cleanMode;
 extern bool deleteConfirmPending;
 extern WritingMode writingMode;
-extern unsigned long lastKeystrokeMs;
-extern BlindDelay blindDelay;
 
 // External functions
 void storePairedDevice(const std::string& address, const std::string& name);
@@ -47,7 +45,6 @@ extern int selectedFileIndex;
 extern int settingsSelection;
 extern int bluetoothDeviceSelection;
 extern Orientation currentOrientation;
-extern RefreshSpeed refreshSpeed;
 extern int charsPerLine;
 extern bool screenDirty;
 extern char renameBuffer[];
@@ -146,11 +143,6 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
       openTitleEdit(editorGetCurrentTitle(), UIState::TEXT_EDITOR);
       return;
     }
-    if (keyCode == HID_KEY_B) {
-      writingMode = (writingMode == WritingMode::BLIND) ? WritingMode::NORMAL : WritingMode::BLIND;
-      screenDirty = true;
-      return;
-    }
     if (keyCode == HID_KEY_T) {
       writingMode = (writingMode == WritingMode::TYPEWRITER) ? WritingMode::NORMAL : WritingMode::TYPEWRITER;
       screenDirty = true;
@@ -186,11 +178,10 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
     return;
   }
 
-  // Tab cycles writing modes — forces immediate refresh even in blind mode
+  // Tab cycles writing modes
   if (keyCode == HID_KEY_TAB) {
     int v = static_cast<int>(writingMode);
-    writingMode = static_cast<WritingMode>((v + 1) % 4);
-    lastKeystrokeMs = 0;
+    writingMode = static_cast<WritingMode>((v + 1) % 3);
     screenDirty = true;
     return;
   }
@@ -366,7 +357,7 @@ static void dispatchEvent(const KeyEvent& event) {
       break;
 
     case UIState::SETTINGS: {
-      const int SETTINGS_COUNT = 7;  // Orientation, Dark Mode, Refresh Speed, Writing Mode, Blind Delay, Bluetooth, Clear Paired
+      const int SETTINGS_COUNT = 5;  // Orientation, Dark Mode, Writing Mode, Bluetooth, Clear Paired
 
       // Up/Down: navigate settings list (physical buttons also map here)
       if (event.keyCode == HID_KEY_DOWN) {
@@ -384,17 +375,11 @@ static void dispatchEvent(const KeyEvent& event) {
         } else if (settingsSelection == 1) {
           darkMode = !darkMode;
         } else if (settingsSelection == 2) {
-          int v = static_cast<int>(refreshSpeed);
-          refreshSpeed = static_cast<RefreshSpeed>((v + 1) % 3);
-        } else if (settingsSelection == 3) {
           int v = static_cast<int>(writingMode);
-          writingMode = static_cast<WritingMode>((v + 1) % 4);
-        } else if (settingsSelection == 4) {
-          int v = static_cast<int>(blindDelay);
-          blindDelay = static_cast<BlindDelay>((v + 1) % 4);
-        } else if (settingsSelection == 5) {
+          writingMode = static_cast<WritingMode>((v + 1) % 3);
+        } else if (settingsSelection == 3) {
           currentState = UIState::BLUETOOTH_SETTINGS;
-        } else if (settingsSelection == 6) {
+        } else if (settingsSelection == 4) {
           clearAllBluetoothBonds();
         }
         screenDirty = true;
@@ -407,14 +392,8 @@ static void dispatchEvent(const KeyEvent& event) {
         } else if (settingsSelection == 1) {
           darkMode = !darkMode;
         } else if (settingsSelection == 2) {
-          int v = static_cast<int>(refreshSpeed);
-          refreshSpeed = static_cast<RefreshSpeed>((v - 1 + 3) % 3);
-        } else if (settingsSelection == 3) {
           int v = static_cast<int>(writingMode);
-          writingMode = static_cast<WritingMode>((v - 1 + 4) % 4);
-        } else if (settingsSelection == 4) {
-          int v = static_cast<int>(blindDelay);
-          blindDelay = static_cast<BlindDelay>((v - 1 + 4) % 4);
+          writingMode = static_cast<WritingMode>((v - 1 + 3) % 3);
         }
         screenDirty = true;
 

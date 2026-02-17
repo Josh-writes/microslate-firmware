@@ -634,9 +634,12 @@ void loop() {
     enterDeepSleep(SleepReason::IDLE_TIMEOUT);
   }
 
-  // Adaptive delay: shorter when active (responsive), longer when idle (saves power).
-  // With CONFIG_PM_ENABLE + tickless idle compiled in, delay() yields to FreeRTOS which
-  // enters real light sleep when no tasks are runnable. BLE modem sleep keeps the radio
-  // alive. 20ms active aligns with BLE connection interval — 100ms idle for deeper sleep.
-  delay((hadActivity || screenDirty) ? 20 : 100);
+  // Adaptive delay with recently-active window for button responsiveness.
+  // BLE keystrokes wake from light sleep via modem interrupt (delay value irrelevant).
+  // Physical buttons are polled, so the idle delay must be short enough to catch a
+  // quick tap (~80-150ms). 50ms idle guarantees 1-2 samples per press.
+  // Stay at fast polling for 2s after any activity for snappy consecutive presses.
+  static constexpr unsigned long ACTIVE_WINDOW_MS = 2000;
+  bool recentlyActive = (millis() - lastInputTime) < ACTIVE_WINDOW_MS;
+  delay((hadActivity || screenDirty || recentlyActive) ? 10 : 50);
 }

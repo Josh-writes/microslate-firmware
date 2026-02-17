@@ -34,13 +34,14 @@ static unsigned long lastReconnectAttempt = 0;
 static constexpr unsigned long MAX_RECONNECT_DELAY = 120000;  // Cap at 2min (was 60s)
 
 // BLE connection parameters (in 1.25ms units)
-// Active typing: 30-50ms interval — responsive enough for keystroke delivery
-static constexpr uint16_t CONN_INTERVAL_ACTIVE_MIN = 24;   // 30ms
-static constexpr uint16_t CONN_INTERVAL_ACTIVE_MAX = 40;   // 50ms
+// Active typing: 15-20ms interval — maximise keystroke responsiveness
+static constexpr uint16_t CONN_INTERVAL_ACTIVE_MIN = 12;   // 15ms
+static constexpr uint16_t CONN_INTERVAL_ACTIVE_MAX = 16;   // 20ms
 // Idle: 100-200ms interval — radio mostly sleeps between events
 static constexpr uint16_t CONN_INTERVAL_IDLE_MIN   = 80;   // 100ms
 static constexpr uint16_t CONN_INTERVAL_IDLE_MAX   = 160;  // 200ms
-static constexpr uint16_t CONN_SLAVE_LATENCY       = 4;    // Keyboard can skip 4 events
+static constexpr uint16_t CONN_SLAVE_LATENCY_ACTIVE = 0;   // No skipped events while typing
+static constexpr uint16_t CONN_SLAVE_LATENCY_IDLE   = 4;   // Keyboard can skip 4 events when idle
 static constexpr uint16_t CONN_SUPERVISION_TIMEOUT  = 400;  // 4s (10ms units)
 static constexpr unsigned long BLE_IDLE_SWITCH_MS   = 3000; // Switch to idle params after 3s no keystrokes
 
@@ -186,15 +187,15 @@ static class ClientCallbacks : public NimBLEClientCallbacks {
   bool onConnParamsUpdateRequest(NimBLEClient* pClient,
                                   const ble_gap_upd_params* params) override {
     // Don't blindly accept the keyboard's requested interval — enforce our floor.
-    // The keyboard may request 7.5-10ms intervals which wake the radio 100+ times/sec.
     uint16_t floorMin = bleConnIdleMode ? CONN_INTERVAL_IDLE_MIN : CONN_INTERVAL_ACTIVE_MIN;
     uint16_t floorMax = bleConnIdleMode ? CONN_INTERVAL_IDLE_MAX : CONN_INTERVAL_ACTIVE_MAX;
+    uint16_t latency  = bleConnIdleMode ? CONN_SLAVE_LATENCY_IDLE : CONN_SLAVE_LATENCY_ACTIVE;
     uint16_t itvlMin = (params->itvl_min > floorMin) ? params->itvl_min : floorMin;
     uint16_t itvlMax = (params->itvl_max > floorMax) ? params->itvl_max : floorMax;
     if (itvlMin > itvlMax) itvlMax = itvlMin;
 
     pClient->updateConnParams(itvlMin, itvlMax,
-                               CONN_SLAVE_LATENCY, CONN_SUPERVISION_TIMEOUT);
+                               latency, CONN_SUPERVISION_TIMEOUT);
     return true;
   }
 
@@ -418,7 +419,7 @@ static void bleConnectTask(void* param) {
 
   // Request our preferred connection parameters (active typing mode)
   pClient->updateConnParams(CONN_INTERVAL_ACTIVE_MIN, CONN_INTERVAL_ACTIVE_MAX,
-                             CONN_SLAVE_LATENCY, CONN_SUPERVISION_TIMEOUT);
+                             CONN_SLAVE_LATENCY_ACTIVE, CONN_SUPERVISION_TIMEOUT);
   bleConnIdleMode = false;
   lastBleKeystrokeMs = millis();
 
@@ -501,12 +502,12 @@ void bleLoop() {
     if (!bleConnIdleMode && (now - lastBleKeystrokeMs > BLE_IDLE_SWITCH_MS)) {
       // No keystrokes for 3s — switch to slow polling to save radio power
       pClient->updateConnParams(CONN_INTERVAL_IDLE_MIN, CONN_INTERVAL_IDLE_MAX,
-                                 CONN_SLAVE_LATENCY, CONN_SUPERVISION_TIMEOUT);
+                                 CONN_SLAVE_LATENCY_IDLE, CONN_SUPERVISION_TIMEOUT);
       bleConnIdleMode = true;
     } else if (bleConnIdleMode && (now - lastBleKeystrokeMs <= BLE_IDLE_SWITCH_MS)) {
-      // Keystroke arrived — switch back to fast polling for responsive typing
+      // Keystroke arrived — switch back to fast polling, no skipped events
       pClient->updateConnParams(CONN_INTERVAL_ACTIVE_MIN, CONN_INTERVAL_ACTIVE_MAX,
-                                 CONN_SLAVE_LATENCY, CONN_SUPERVISION_TIMEOUT);
+                                 CONN_SLAVE_LATENCY_ACTIVE, CONN_SUPERVISION_TIMEOUT);
       bleConnIdleMode = false;
     }
   }

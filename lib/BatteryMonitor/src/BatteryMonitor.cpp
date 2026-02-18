@@ -24,8 +24,11 @@ uint16_t BatteryMonitor::readMillivolts() const
 
 uint16_t BatteryMonitor::readRawMillivolts() const
 {
-    const uint16_t raw = analogRead(_adcPin);
-    return raw;
+    uint32_t sum = 0;
+    for (int i = 0; i < 16; i++) {
+        sum += analogRead(_adcPin);
+    }
+    return static_cast<uint16_t>(sum / 16);
 }
 
 double BatteryMonitor::readVolts() const

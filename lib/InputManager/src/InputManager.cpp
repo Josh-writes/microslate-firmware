@@ -32,6 +32,7 @@ void InputManager::begin() {
   // Configure ADC using ESP-IDF API directly to avoid GPIO reconfiguration
   // that Arduino's analogRead() triggers on every call in the dual framework
   adc1_config_width(ADC_WIDTH_BIT_12);
+  adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_12);  // GPIO 0 (battery)
   adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_12);  // GPIO 1
   adc1_config_channel_atten(ADC1_CHANNEL_2, ADC_ATTEN_DB_12);  // GPIO 2
 

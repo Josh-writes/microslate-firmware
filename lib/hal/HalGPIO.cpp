@@ -6,7 +6,8 @@
 void HalGPIO::begin() {
   inputMgr.begin();
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
-  pinMode(BAT_GPIO0, INPUT);
+  // BAT_GPIO0 is configured for ADC via adc1_config_channel_atten in InputManager::begin()
+  // — do NOT call pinMode() here as it reconfigures the pin as digital input in dual framework
   pinMode(UART0_RXD, INPUT);
 }
 

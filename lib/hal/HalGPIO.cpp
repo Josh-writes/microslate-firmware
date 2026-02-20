@@ -1,11 +1,13 @@
 #include <HalGPIO.h>
+#include <Preferences.h>
 #include <SPI.h>
 #include <esp_sleep.h>
 
 void HalGPIO::begin() {
   inputMgr.begin();
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
-  pinMode(BAT_GPIO0, INPUT);
+  // BAT_GPIO0 is configured for ADC via adc1_config_channel_atten in InputManager::begin()
+  // — do NOT call pinMode() here as it reconfigures the pin as digital input in dual framework
   pinMode(UART0_RXD, INPUT);
 }
 
@@ -39,10 +41,26 @@ int HalGPIO::getBatteryPercentage() const {
   static const BatteryMonitor battery = BatteryMonitor(BAT_GPIO0);
   static int cachedPct = -1;
   static unsigned long lastReadMs = 0;
+
+  // On first call, load the last persisted reading so we don't show a stale default
+  if (cachedPct < 0) {
+    Preferences prefs;
+    prefs.begin("battery", true);  // read-only
+    cachedPct = prefs.getInt("pct", -1);
+    prefs.end();
+  }
+
   unsigned long now = millis();
   // Battery voltage changes on a timescale of minutes — no need to read every frame
   if (cachedPct < 0 || (now - lastReadMs) >= 30000) {
-    cachedPct = battery.readPercentage();
+    int newPct = battery.readPercentage();
+    if (newPct != cachedPct) {
+      Preferences prefs;
+      prefs.begin("battery", false);
+      prefs.putInt("pct", newPct);
+      prefs.end();
+    }
+    cachedPct = newPct;
     lastReadMs = now;
   }
   return cachedPct;

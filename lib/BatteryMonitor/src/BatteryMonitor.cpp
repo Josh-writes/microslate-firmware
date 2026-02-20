@@ -1,5 +1,5 @@
 #include "BatteryMonitor.h"
-#include <esp32-hal-adc.h>
+#include <driver/adc.h>
 #include <esp_adc_cal.h>
 
 inline float min(const float a, const float b) { return a < b ? a : b; }
@@ -17,15 +17,14 @@ uint16_t BatteryMonitor::readPercentage() const
 
 uint16_t BatteryMonitor::readMillivolts() const
 {
-    const uint16_t raw = readRawMillivolts();
+    const int raw = adc1_get_raw(ADC1_CHANNEL_0);
     const uint32_t mv = millivoltsFromRawAdc(raw);
     return static_cast<uint32_t>(mv * _dividerMultiplier);
 }
 
 uint16_t BatteryMonitor::readRawMillivolts() const
 {
-    const uint16_t raw = analogRead(_adcPin);
-    return raw;
+    return adc1_get_raw(ADC1_CHANNEL_0);
 }
 
 double BatteryMonitor::readVolts() const

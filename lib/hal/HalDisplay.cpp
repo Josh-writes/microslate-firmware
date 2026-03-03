@@ -36,6 +36,14 @@ void HalDisplay::refreshDisplay(HalDisplay::RefreshMode mode, bool turnOffScreen
   einkDisplay.refreshDisplay(convertRefreshMode(mode), turnOffScreen);
 }
 
+void HalDisplay::beginRefresh(HalDisplay::RefreshMode mode, bool turnOffScreen) {
+  einkDisplay.beginRefresh(convertRefreshMode(mode), turnOffScreen);
+}
+
+bool HalDisplay::isRefreshing() const { return einkDisplay.isRefreshing(); }
+
+bool HalDisplay::pollRefresh() { return einkDisplay.pollRefresh(); }
+
 void HalDisplay::deepSleep() { einkDisplay.deepSleep(); }
 
 uint8_t* HalDisplay::getFrameBuffer() const { return einkDisplay.getFrameBuffer(); }

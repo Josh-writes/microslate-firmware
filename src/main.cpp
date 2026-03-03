@@ -530,8 +530,13 @@ void loop() {
     }
   }
 
-  // The e-ink hardware refresh (~640ms) is the natural rate limiter — no cooldown needed.
-  if (screenDirty) {
+  // Poll display refresh — non-blocking check of BUSY pin
+  if (renderer.isRefreshing()) {
+    renderer.pollRefresh();
+  }
+
+  // Don't start a new screen update while display is still refreshing
+  if (screenDirty && !renderer.isRefreshing()) {
     updateScreen();
   }
 

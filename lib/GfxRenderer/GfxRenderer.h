@@ -66,6 +66,9 @@ class GfxRenderer {
   int getScreenWidth() const;
   int getScreenHeight() const;
   void displayBuffer(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH) const;
+  void beginRefresh(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH) const;
+  bool isRefreshing() const;
+  bool pollRefresh() const;
   // EXPERIMENTAL: Windowed update - display only a rectangular region
   // void displayWindow(int x, int y, int width, int height) const;
   void invertScreen() const;

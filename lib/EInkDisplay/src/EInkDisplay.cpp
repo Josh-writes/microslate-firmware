@@ -599,6 +599,107 @@ void EInkDisplay::refreshDisplay(const RefreshMode mode, const bool turnOffScree
   waitWhileBusy(refreshType);
 }
 
+void EInkDisplay::beginRefresh(RefreshMode mode, const bool turnOffScreen) {
+  if (!isScreenOn && !turnOffScreen) {
+    mode = HALF_REFRESH;
+  }
+
+  if (inGrayscaleMode) {
+    inGrayscaleMode = false;
+    grayscaleRevert();
+  }
+
+  // Set up full screen RAM area
+  setRamArea(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+
+  if (mode != FAST_REFRESH) {
+    writeRamBuffer(CMD_WRITE_RAM_BW, frameBuffer, BUFFER_SIZE);
+    writeRamBuffer(CMD_WRITE_RAM_RED, frameBuffer, BUFFER_SIZE);
+  } else {
+    writeRamBuffer(CMD_WRITE_RAM_BW, frameBuffer, BUFFER_SIZE);
+#ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
+    writeRamBuffer(CMD_WRITE_RAM_RED, frameBufferActive, BUFFER_SIZE);
+#endif
+  }
+
+#ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
+  swapBuffers();
+#endif
+
+  // --- Kick the waveform (same as refreshDisplay but without waitWhileBusy) ---
+  sendCommand(CMD_DISPLAY_UPDATE_CTRL1);
+  sendData((mode == FAST_REFRESH) ? CTRL1_NORMAL : CTRL1_BYPASS_RED);
+
+  uint8_t displayMode = 0x00;
+  if (!isScreenOn) {
+    isScreenOn = true;
+    displayMode |= 0xC0;
+  }
+  if (turnOffScreen) {
+    isScreenOn = false;
+    displayMode |= 0x03;
+  }
+
+  if (mode == FULL_REFRESH) {
+    displayMode |= 0x34;
+  } else if (mode == HALF_REFRESH) {
+    sendCommand(CMD_WRITE_TEMP);
+    sendData(0x5A);
+    displayMode |= 0xD4;
+  } else {
+    displayMode |= customLutActive ? 0x0C : 0x1C;
+  }
+
+  const char* refreshType = (mode == FULL_REFRESH) ? "full" : (mode == HALF_REFRESH) ? "half" : "fast";
+  if (Serial) Serial.printf("[%lu]   beginRefresh 0x%02X (%s)...\n", millis(), displayMode, refreshType);
+  sendCommand(CMD_DISPLAY_UPDATE_CTRL2);
+  sendData(displayMode);
+  sendCommand(CMD_MASTER_ACTIVATION);
+
+  // Record state and return immediately (non-blocking)
+  _pendingMode = mode;
+  _refreshStartMs = millis();
+  _refreshState = REFRESHING;
+}
+
+bool EInkDisplay::pollRefresh() {
+  if (_refreshState == IDLE) return true;
+
+  // Timeout safety — 10 seconds
+  if (millis() - _refreshStartMs > 10000) {
+    if (Serial) Serial.printf("[%lu]   pollRefresh: TIMEOUT after %lu ms\n", millis(), millis() - _refreshStartMs);
+    _refreshState = IDLE;
+    return true;
+  }
+
+  if (_refreshState == REFRESHING) {
+    if (digitalRead(_busy) == HIGH) {
+      return false;  // Still busy
+    }
+    if (Serial) Serial.printf("[%lu]   pollRefresh: waveform done (%lu ms)\n", millis(), millis() - _refreshStartMs);
+
+#ifdef EINK_DISPLAY_SINGLE_BUFFER_MODE
+    // Need to sync RED RAM with current frame
+    _refreshState = NEEDS_RED_SYNC;
+#else
+    _refreshState = IDLE;
+    return true;
+#endif
+  }
+
+#ifdef EINK_DISPLAY_SINGLE_BUFFER_MODE
+  if (_refreshState == NEEDS_RED_SYNC) {
+    setRamArea(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    writeRamBuffer(CMD_WRITE_RAM_RED, frameBuffer, BUFFER_SIZE);
+    _refreshState = IDLE;
+    if (Serial) Serial.printf("[%lu]   pollRefresh: RED sync done\n", millis());
+    return true;
+  }
+#endif
+
+  return false;
+}
+
 void EInkDisplay::setCustomLUT(const bool enabled, const unsigned char* lutData) {
   if (enabled) {
     if (Serial) Serial.printf("[%lu]   Loading custom LUT...\n", millis());

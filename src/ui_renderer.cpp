@@ -187,7 +187,7 @@ void drawMainMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   }
   drawBattery(renderer, gpio);
 
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
 
 void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
@@ -239,7 +239,7 @@ void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
                     "Ctrl+N:Title  Ctrl+D:Delete", 0, tc);
   }
 
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
 
 // Helper: draw a single editor line from the buffer
@@ -359,7 +359,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
 
     editorSetVisibleLines(1);
 
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    renderer.beginRefresh(HalDisplay::FAST_REFRESH);
     return;
   }
 
@@ -401,7 +401,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
       drawEditorCursor(renderer, cursorY, lineHeight, sw, tc);
     }
 
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    renderer.beginRefresh(HalDisplay::FAST_REFRESH);
     return;
   }
 
@@ -430,7 +430,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
     drawEditorCursor(renderer, cursorY, lineHeight, sw, tc);
   }
 
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
 
 void drawRenameScreen(GfxRenderer& renderer, HalGPIO& gpio) {
@@ -460,7 +460,7 @@ void drawRenameScreen(GfxRenderer& renderer, HalGPIO& gpio) {
   clippedLine(renderer, 5, sh - 36, sw - 5, sh - 36, tc);
   drawClippedText(renderer, FONT_SMALL, 10, sh - 30, "Enter: Confirm   Esc: Cancel", 0, tc);
 
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
 
 void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
@@ -538,7 +538,7 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
                     "Arrows:Navigate  Enter:Change  Esc:Back", 0, !darkMode);
   }
 
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
 
 void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
@@ -671,7 +671,7 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
                     "Enter:Connect  Right:Scan  Left:Disconnect  Esc:Back", 0, tc);
   }
 
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
 
 // Helper: draw signal strength indicator (1-4 bars)
@@ -855,5 +855,5 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
     }
   }
 
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }

@@ -628,6 +628,14 @@ void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const
   display.displayBuffer(refreshMode, fadingFix);
 }
 
+void GfxRenderer::beginRefresh(const HalDisplay::RefreshMode refreshMode) const {
+  display.beginRefresh(refreshMode, fadingFix);
+}
+
+bool GfxRenderer::isRefreshing() const { return display.isRefreshing(); }
+
+bool GfxRenderer::pollRefresh() const { return display.pollRefresh(); }
+
 std::string GfxRenderer::truncatedText(const int fontId, const char* text, const int maxWidth,
                                        const EpdFontFamily::Style style) const {
   if (!text || maxWidth <= 0) return "";

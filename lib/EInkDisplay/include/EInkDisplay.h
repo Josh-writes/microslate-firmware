@@ -43,6 +43,11 @@ class EInkDisplay {
 #endif
 
   void displayBuffer(RefreshMode mode = FAST_REFRESH, bool turnOffScreen = false);
+
+  // Non-blocking refresh API
+  void beginRefresh(RefreshMode mode = FAST_REFRESH, bool turnOffScreen = false);
+  bool isRefreshing() const { return _refreshState != IDLE; }
+  bool pollRefresh();
   // EXPERIMENTAL: Windowed update - display only a rectangular region
   void displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool turnOffScreen = false);
   void displayGrayBuffer(bool turnOffScreen = false);
@@ -86,6 +91,12 @@ class EInkDisplay {
   bool customLutActive;
   bool inGrayscaleMode;
   bool drawGrayscale;
+
+  // Non-blocking refresh state
+  enum RefreshState { IDLE, REFRESHING, NEEDS_RED_SYNC };
+  RefreshState _refreshState = IDLE;
+  RefreshMode _pendingMode = FAST_REFRESH;
+  unsigned long _refreshStartMs = 0;
 
   // Low-level display control
   void resetDisplay();

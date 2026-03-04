@@ -1,4 +1,5 @@
 #include "BatteryMonitor.h"
+#include <cmath>
 #include <driver/adc.h>
 #include <esp_adc_cal.h>
 
@@ -17,7 +18,13 @@ uint16_t BatteryMonitor::readPercentage() const
 
 uint16_t BatteryMonitor::readMillivolts() const
 {
-    const int raw = adc1_get_raw(ADC1_CHANNEL_0);
+    // Take multiple samples and average to reduce ADC noise/settling errors
+    constexpr int NUM_SAMPLES = 8;
+    uint32_t sum = 0;
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+        sum += adc1_get_raw(ADC1_CHANNEL_0);
+    }
+    const int raw = sum / NUM_SAMPLES;
     const uint32_t mv = millivoltsFromRawAdc(raw);
     return static_cast<uint32_t>(mv * _dividerMultiplier);
 }

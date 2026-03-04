@@ -41,6 +41,7 @@ int HalGPIO::getBatteryPercentage() const {
   static const BatteryMonitor battery = BatteryMonitor(BAT_GPIO0);
   static int cachedPct = -1;
   static unsigned long lastReadMs = 0;
+  static bool adcSettled = false;
 
   // On first call, load the last persisted reading so we don't show a stale default
   if (cachedPct < 0) {
@@ -51,6 +52,17 @@ int HalGPIO::getBatteryPercentage() const {
   }
 
   unsigned long now = millis();
+
+  // ADC reads high for ~2 minutes after boot/wake — trust NVS cache during settling
+  if (!adcSettled) {
+    if (now < 120000) {
+      // Still settling — return NVS cached value if we have one
+      if (cachedPct >= 0) return cachedPct;
+      // No NVS value at all — fall through to read ADC (better than showing nothing)
+    }
+    adcSettled = true;
+  }
+
   // Battery voltage changes on a timescale of minutes — no need to read every frame
   if (cachedPct < 0 || (now - lastReadMs) >= 30000) {
     int newPct = battery.readPercentage();

@@ -1,4 +1,5 @@
 #include "BatteryMonitor.h"
+#include <cmath>
 #include <driver/adc.h>
 #include <esp_adc_cal.h>
 

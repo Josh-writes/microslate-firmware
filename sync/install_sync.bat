@@ -15,10 +15,11 @@ set "VBS=%TEMP%\microslate_shortcut.vbs"
 cscript //nologo "%VBS%"
 del "%VBS%"
 
+:: Start it right now in the background (silent, no window)
+start "" pythonw.exe "%SCRIPT%"
+
 echo.
-echo MicroSlate Sync will now start automatically on login.
-echo Shortcut created in: %STARTUP%
-echo.
-echo To start it right now, run: python "%SCRIPT%"
+echo MicroSlate Sync installed and running.
+echo It will start automatically on every login.
 echo.
 pause

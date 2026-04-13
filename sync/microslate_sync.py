@@ -15,6 +15,7 @@ Dependencies: requests  (pip install requests)
 import os
 import time
 import logging
+import subprocess
 import requests
 
 # --- Configuration ---
@@ -37,6 +38,30 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("sync")
+
+
+def notify(title, message):
+    """Show a Windows balloon notification (no dependencies required)."""
+    try:
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$n = New-Object System.Windows.Forms.NotifyIcon;"
+            "$n.Icon = [System.Drawing.SystemIcons]::Information;"
+            f"$n.BalloonTipTitle = '{title}';"
+            f"$n.BalloonTipText = '{message}';"
+            "$n.Visible = $true;"
+            "$n.ShowBalloonTip(6000);"
+            "Start-Sleep -Seconds 7;"
+            "$n.Dispose()"
+        )
+        subprocess.Popen(
+            ["powershell", "-WindowStyle", "Hidden", "-Command", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as e:
+        log.warning("Notification failed: %s", e)
 
 
 def get_device_files():
@@ -70,19 +95,19 @@ def get_local_files():
 
 
 def sync_once(device_files):
-    """One-way sync: download every device file to PC. Never upload or delete."""
+    """One-way sync: download every device file to PC. Returns list of downloaded filenames."""
     device_map = {f["name"]: f["size"] for f in device_files}
     local_map = get_local_files()
-    actions = 0
+    downloaded = []
 
     for name in sorted(device_map.keys()):
-        on_local = name in local_map
-
-        if not on_local or device_map[name] != local_map[name]:
+        if name not in local_map or device_map[name] != local_map[name]:
             download_file(name)
-            actions += 1
+            downloaded.append(name)
+        else:
+            log.info("  Unchanged: %s", name)
 
-    return actions
+    return downloaded
 
 
 def signal_sync_complete():
@@ -99,24 +124,25 @@ def main():
     log.info("MicroSlate Sync started")
     log.info("Local folder: %s", LOCAL_DIR)
     log.info("Device URL:   %s", DEVICE_URL)
-
-    # Wait for device to appear
     log.info("Waiting for device...")
+
     while True:
         device_files = get_device_files()
         if device_files is not None:
-            break
+            log.info("Device found — syncing...")
+            try:
+                downloaded = sync_once(device_files)
+                if downloaded:
+                    log.info("Sync complete: %d file(s) transferred", len(downloaded))
+                    names = "\n".join(downloaded)
+                    notify("MicroSlate Sync", f"Downloaded {len(downloaded)} file(s):\n{names}")
+                else:
+                    log.info("Sync complete: no changes needed")
+                signal_sync_complete()
+            except Exception as e:
+                log.error("Sync error: %s", e)
+            log.info("Waiting for next sync...")
         time.sleep(POLL_INTERVAL)
-
-    log.info("Device found — syncing...")
-    actions = sync_once(device_files)
-    if actions > 0:
-        log.info("Sync complete: %d file(s) transferred", actions)
-    else:
-        log.info("Sync complete: no changes needed")
-
-    signal_sync_complete()
-    log.info("Done")
 
 
 if __name__ == "__main__":

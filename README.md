@@ -166,9 +166,9 @@ Back up all notes from the device to your PC over WiFi. The device and PC must b
    ```bash
    pip install requests
    ```
-3. Double-click **`sync\install_sync.bat`** to make the sync script run automatically on login
+3. Double-click **`sync\install_sync.bat`** to install and start the sync script
 
-That's it. The script runs silently in the background — no window, no tray icon. Notes are saved to `Documents\MicroSlate Notes\` by default (edit `LOCAL_DIR` in `microslate_sync.py` to change).
+That's it. The script starts immediately and will run silently in the background on every login — no window, no tray icon. When a sync completes, a Windows notification pops up listing the files that were downloaded. Notes are saved to `Documents\MicroSlate Notes\` by default (edit `LOCAL_DIR` in `microslate_sync.py` to change).
 
 To stop auto-start later, double-click **`sync\uninstall_sync.bat`**.
 
@@ -177,8 +177,8 @@ To stop auto-start later, double-click **`sync\uninstall_sync.bat`**.
 1. Select **Sync** from the main menu on the device
 2. **First time:** pick your WiFi network and enter the password. The device asks to save credentials.
 3. **After that:** the device auto-connects — just press Sync and wait
-4. The device shows "Waiting for PC..." while the background script syncs your notes
-5. When done, the device shows a summary and turns WiFi off automatically
+4. The device syncs automatically once connected — a progress log is shown on screen
+5. When done, the device shows a summary and turns WiFi off automatically. A Windows notification appears listing the downloaded files
 
 If the sync script isn't running, you can start it manually:
 ```bash

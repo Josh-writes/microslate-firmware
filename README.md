@@ -37,7 +37,7 @@ A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with an
 
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/Josh-writes/microslate-firmware
 cd xteink-writer-firmware
 
 # Build

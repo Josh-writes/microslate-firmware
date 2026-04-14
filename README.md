@@ -1,6 +1,7 @@
 # MicroSlate
 
 A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with any Bluetooth keyboard and saves notes to MicroSD.
+
 ## Features
 
 - **Bluetooth Keyboard** — BLE HID host, connects to any standard wireless keyboard. Stores up to 4 keyboards; auto-cycles through them on reconnect. Tested with Logitech Keys-To-Go 2 and Keychron K3.
@@ -53,7 +54,7 @@ The upload port defaults to `COM5` in `platformio.ini`. To override:
 pio run --target upload --upload-port /dev/ttyUSB0
 ```
 
-All libraries are included in the `lib/` directory. The only external dependency fetched automatically by PlatformIO is **NimBLE-Arduino** (BLE stack).
+All libraries are included in the `lib/` directory. The only external dependency fetched automatically by PlatformIO is **esp-nimble-cpp** (BLE stack).
 
 ### First Boot
 

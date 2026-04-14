@@ -3,7 +3,7 @@
 A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with any Bluetooth keyboard and saves notes to MicroSD.
 ## Features
 
-- **Bluetooth Keyboard** — BLE HID host, connects to any standard wireless keyboard. Tested with Logitech Keys-To-Go 2.
+- **Bluetooth Keyboard** — BLE HID host, connects to any standard wireless keyboard. Stores up to 4 keyboards; auto-cycles through them on reconnect. Tested with Logitech Keys-To-Go 2 and Keychron K3.
 - **Note Management** — browse, create, rename, and delete notes from an SD card
 - **Named Notes** — each note has a title stored in the file; shown in the browser and editable without touching body text
 - **Text Editor** — cursor navigation, word-wrap, fast e-paper refresh
@@ -59,11 +59,11 @@ All libraries are included in the `lib/` directory. The only external dependency
 
 1. Insert a FAT32-formatted MicroSD card
 2. Power on the device — it boots to the main menu
-3. Go to **Settings → Bluetooth Settings** and scan for your keyboard
+3. Go to **Settings → Bluetooth** and scan for your keyboard
 4. Select your keyboard from the list and press Enter to pair
 5. Return to the main menu and start writing
 
-The device remembers the paired keyboard and reconnects automatically on subsequent boots.
+The device remembers paired keyboards (up to 4) and reconnects automatically on subsequent boots. If multiple keyboards are stored, it cycles through them until one responds.
 
 ## Usage
 
@@ -138,10 +138,24 @@ Navigate with all four direction buttons (or Up/Down on keyboard). Press Enter (
 | Orientation | Portrait, Landscape CW, Inverted, Landscape CCW |
 | Dark Mode | Light / Dark |
 | Writing Mode | Normal, Typewriter, Pagination |
-| Bluetooth | Opens Bluetooth Settings submenu |
-| Clear Paired | Removes stored keyboard pairing |
+| Bluetooth | Opens Bluetooth scan to pair a new keyboard |
+| Paired Keyboards | Manage saved keyboards (connect, forget, disconnect) |
 
 All settings persist across reboots.
+
+### Paired Keyboards
+
+Shows all keyboards saved on the device (up to 4). The currently active keyboard is labelled **active**; the last used keyboard when none is connected is labelled **last**.
+
+| Key | Action |
+|-----|--------|
+| Up / Down | Navigate list |
+| Enter | Switch to selected keyboard |
+| D | Forget selected keyboard (removes pairing) |
+| Left | Disconnect selected keyboard (if currently active) |
+| Esc | Back to Settings |
+
+To pair a second keyboard, go to **Settings → Bluetooth**, scan, and connect. Both keyboards will then appear in the Paired Keyboards list. On each boot the device tries the last-used keyboard first, then works through the rest of the list until one connects.
 
 ### Bluetooth Settings
 

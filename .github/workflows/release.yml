@@ -1,0 +1,48 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .pio/build
+          key: pio-${{ hashFiles('platformio.ini', 'sdkconfig.defaults') }}
+          restore-keys: pio-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run
+
+      - name: Merge binary
+        run: |
+          pip install esptool
+          esptool.py --chip esp32c3 merge_bin \
+            --flash_mode dio --flash_size 16MB \
+            -o microslate-${{ github.ref_name }}.bin \
+            0x0    .pio/build/xteink_x4/bootloader.bin \
+            0x8000 .pio/build/xteink_x4/partitions.bin \
+            0xe000 ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+            0x10000 .pio/build/xteink_x4/firmware.bin
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: microslate-${{ github.ref_name }}.bin
+          generate_release_notes: true

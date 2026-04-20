@@ -29,30 +29,43 @@ A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with an
 
 ## Installation
 
-### Prerequisites
+### Option 1 — Flash a pre-built binary (recommended)
+
+No build tools required. Works on Windows, Mac, and Linux.
+
+1. Download the latest `microslate-vX.X.X.bin` from the [Releases](https://github.com/Josh-writes/microslate-firmware/releases) page
+2. Install esptool:
+   ```bash
+   pip install esptool
+   ```
+3. Connect the Xteink X4 via USB and flash:
+   ```bash
+   esptool.py --port PORT write_flash 0x0 microslate-vX.X.X.bin
+   ```
+   Replace `PORT` with your device port:
+   - **Windows:** `COM3`, `COM4`, etc. (check Device Manager)
+   - **Mac:** `/dev/tty.usbmodem*` or `/dev/tty.wchusbserial*`
+   - **Linux:** `/dev/ttyUSB0` or `/dev/ttyACM0`
+
+### Option 2 — Build from source
+
+Requires a Windows or Linux x86_64 machine (the ESP-IDF toolchain does not support Mac ARM or Raspberry Pi).
+
+**Prerequisites**
 
 - [PlatformIO](https://platformio.org/install/) (CLI or VS Code extension)
 - USB cable to connect to the Xteink X4
-
-### Build and Flash
 
 ```bash
 # Clone the repository
 git clone https://github.com/Josh-writes/microslate-firmware
 cd xteink-writer-firmware
 
-# Build
-pio run
-
 # Build and upload (adjust port if needed)
-pio run --target upload
-```
-
-The upload port defaults to `COM5` in `platformio.ini`. To override:
-
-```bash
 pio run --target upload --upload-port /dev/ttyUSB0
 ```
+
+The upload port defaults to `COM5` in `platformio.ini`.
 
 All libraries are included in the `lib/` directory. The only external dependency fetched automatically by PlatformIO is **esp-nimble-cpp** (BLE stack).
 

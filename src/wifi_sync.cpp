@@ -42,7 +42,6 @@ static void loadSavedCredentials();
 static bool getSavedPassword(const char* ssid, char* passBuf, int passBufSize);
 static void saveCredential(const char* ssid, const char* pass);
 static void forgetCredential(const char* ssid);
-static bool getFirstSavedCredential(char* ssidBuf, int ssidBufSize, char* passBuf, int passBufSize);
 
 // --- Connecting state ---
 static unsigned long connectStartMs = 0;
@@ -58,6 +57,8 @@ static int totalFilesToSync = 0; // Total .txt files on device
 static constexpr int MAX_LOG_LINES = 6;
 static char syncLog[MAX_LOG_LINES][48];
 static int syncLogCount = 0;
+
+static bool pcConnected = false;
 
 static unsigned long lastHttpActivityMs = 0;
 static constexpr unsigned long SYNC_TIMEOUT_MS = 60000;  // 60s no HTTP → auto-disconnect
@@ -86,6 +87,7 @@ static void resetSyncTracking() {
   totalFilesToSync = getFileCount();
   syncLogCount = 0;
   syncCompletePending = false;
+  pcConnected = false;
   for (int i = 0; i < MAX_LOG_LINES; i++) syncLog[i][0] = '\0';
 }
 
@@ -141,23 +143,6 @@ static bool getSavedPassword(const char* ssid, char* passBuf, int passBufSize) {
     }
   }
   return false;
-}
-
-static bool getFirstSavedCredential(char* ssidBuf, int ssidBufSize, char* passBuf, int passBufSize) {
-  int count = wifiPrefs.getInt("wifi_count", 0);
-  if (count <= 0) return false;
-  // Return the first saved network
-  char sKey[16], pKey[16];
-  snprintf(sKey, sizeof(sKey), "wifi_ssid_%d", 0);
-  snprintf(pKey, sizeof(pKey), "wifi_pass_%d", 0);
-  String ssid = wifiPrefs.getString(sKey, "");
-  String pass = wifiPrefs.getString(pKey, "");
-  if (ssid.length() == 0) return false;
-  strncpy(ssidBuf, ssid.c_str(), ssidBufSize - 1);
-  ssidBuf[ssidBufSize - 1] = '\0';
-  strncpy(passBuf, pass.c_str(), passBufSize - 1);
-  passBuf[passBufSize - 1] = '\0';
-  return true;
 }
 
 static void saveCredential(const char* ssid, const char* pass) {
@@ -376,14 +361,11 @@ static void pollConnection() {
     return;
   }
 
-  if (millis() - connectStartMs > 15000) {
+  if (millis() - connectStartMs > 25000) {
     WiFi.disconnect(true);
     strcpy(statusText, "Connection failed");
 
-    // If we used saved creds via auto-connect, prompt to forget
-    if (usedSavedPassword && autoConnectAttempted) {
-      syncState = SyncState::FORGET_PROMPT;
-    } else if (usedSavedPassword) {
+    if (usedSavedPassword) {
       syncState = SyncState::FORGET_PROMPT;
     } else {
       syncState = SyncState::CONNECT_FAILED;
@@ -400,6 +382,10 @@ static void pollConnection() {
 
 static void handleFileList() {
   lastHttpActivityMs = millis();
+  if (!pcConnected) {
+    pcConnected = true;
+    screenDirty = true;
+  }
 
   auto dir = SdMan.open("/notes");
   if (!dir || !dir.isDirectory()) {
@@ -468,7 +454,7 @@ static void handleFileDownload() {
 
   // Track: PC downloaded a file from device = "sent"
   filesSent++;
-  addSyncLogEntry("Sent: %s", filename.c_str());
+  screenDirty = true;
   DBG_PRINTF("[SYNC] Sent file: %s\n", filename.c_str());
 }
 
@@ -634,7 +620,10 @@ void syncHandleKey(uint8_t keyCode, uint8_t modifiers) {
         DBG_PRINTF("[SYNC] Forgot credentials for %s\n", connectingSSID);
         beginScan();
       } else if (keyCode == HID_KEY_DOWN || keyCode == HID_KEY_ESCAPE) {
-        beginScan();
+        // Keep credentials — go to network list so user can retry manually
+        // rather than triggering auto-connect again immediately
+        syncState = SyncState::NETWORK_LIST;
+        screenDirty = true;
       }
       break;
   }
@@ -772,11 +761,6 @@ int getSyncFilesReceived() {
   return filesReceived;
 }
 
-int getSyncLogCount() {
-  return syncLogCount;
-}
-
-const char* getSyncLogLine(int i) {
-  if (i < 0 || i >= syncLogCount) return "";
-  return syncLog[i];
+bool isPcConnected() {
+  return pcConnected;
 }

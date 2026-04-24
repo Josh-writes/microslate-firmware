@@ -94,22 +94,6 @@ def get_local_files():
     return result
 
 
-def sync_once(device_files):
-    """One-way sync: download every device file to PC. Returns list of downloaded filenames."""
-    device_map = {f["name"]: f["size"] for f in device_files}
-    local_map = get_local_files()
-    downloaded = []
-
-    for name in sorted(device_map.keys()):
-        if name not in local_map or device_map[name] != local_map[name]:
-            download_file(name)
-            downloaded.append(name)
-        else:
-            log.info("  Unchanged: %s", name)
-
-    return downloaded
-
-
 def signal_sync_complete():
     """Tell the device we're done syncing so it can shut off WiFi."""
     try:
@@ -118,6 +102,28 @@ def signal_sync_complete():
         log.info("Signaled sync-complete to device")
     except Exception as e:
         log.warning("Could not signal sync-complete: %s", e)
+
+
+def sync_once(device_files):
+    """One-way sync: download new/changed files to PC. Returns (downloaded, total) tuple."""
+    device_map = {f["name"]: f["size"] for f in device_files}
+    local_map = get_local_files()
+
+    to_download = [
+        name for name in sorted(device_map.keys())
+        if name not in local_map or device_map[name] != local_map[name]
+    ]
+
+    downloaded = []
+    for name in to_download:
+        download_file(name)
+        downloaded.append(name)
+
+    for name in sorted(device_map.keys()):
+        if name not in to_download:
+            log.info("  Unchanged: %s", name)
+
+    return downloaded, len(device_map)
 
 
 def main():
@@ -131,13 +137,17 @@ def main():
         if device_files is not None:
             log.info("Device found — syncing...")
             try:
-                downloaded = sync_once(device_files)
+                downloaded, total = sync_once(device_files)
                 if downloaded:
-                    log.info("Sync complete: %d file(s) transferred", len(downloaded))
-                    names = "\n".join(downloaded)
-                    notify("MicroSlate Sync", f"Downloaded {len(downloaded)} file(s):\n{names}")
+                    unchanged = total - len(downloaded)
+                    log.info("Sync complete: %d of %d file(s) transferred", len(downloaded), total)
+                    msg = f"{len(downloaded)} of {total} files downloaded"
+                    if unchanged > 0:
+                        msg += f"\n{unchanged} already up to date"
+                    notify("MicroSlate Sync", msg)
                 else:
-                    log.info("Sync complete: no changes needed")
+                    log.info("Sync complete: all %d files up to date", total)
+                    notify("MicroSlate Sync", f"All {total} files up to date")
                 signal_sync_complete()
             except Exception as e:
                 log.error("Sync error: %s", e)

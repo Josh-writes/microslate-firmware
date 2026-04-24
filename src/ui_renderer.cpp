@@ -822,12 +822,10 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       renderer.drawRect(15, 62, sw - 30, 30, tc);
 
       // Show dots for password characters (privacy)
-      const char* pass = getPasswordBuffer();
       int pLen = getPasswordLen();
-      char dots[MAX_TITLE_LEN + 1];
-      int dotLen = pLen < MAX_TITLE_LEN ? pLen : MAX_TITLE_LEN;
-      for (int i = 0; i < dotLen; i++) dots[i] = '*';
-      dots[dotLen] = '\0';
+      char dots[64];
+      for (int i = 0; i < pLen; i++) dots[i] = '*';
+      dots[pLen] = '\0';
       drawClippedText(renderer, FONT_UI, 20, 66, dots, sw - 50, tc);
 
       // Cursor
@@ -852,26 +850,59 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       const char* ip = getSyncStatusText();
       drawClippedText(renderer, FONT_SMALL, 20, 42, ip, sw - 40, tc, EpdFontFamily::BOLD);
 
-      int logCount = getSyncLogCount();
-      if (logCount == 0) {
-        drawClippedText(renderer, FONT_UI, 20, 75, "Waiting for PC...", sw - 40, tc);
-        drawClippedText(renderer, FONT_SMALL, 20, 110, "Run microslate_sync.py on PC", sw - 40, tc);
-        drawClippedText(renderer, FONT_SMALL, 20, 130, "See README for setup", sw - 40, tc);
-      } else {
-        // Show activity log
-        int yPos = 68;
-        for (int i = 0; i < logCount && yPos < sh - 50; i++) {
-          drawClippedText(renderer, FONT_SMALL, 20, yPos, getSyncLogLine(i), sw - 40, tc);
-          yPos += 20;
+      int sent    = getSyncFilesSent();
+      bool pcConn = isPcConnected();
+
+      // Build the stage list. Static so string pointers remain valid after this scope.
+      static char fileStageText[MAX_FILES][16];
+      static struct { const char* text; bool done; } stages[MAX_FILES + 3];
+      int numStages = 0;
+
+      auto push = [&](const char* text, bool done) {
+        if (numStages < MAX_FILES + 3) stages[numStages++] = { text, done };
+      };
+
+      push("Connected to WiFi", true);
+      push("PC connected",      pcConn);
+
+      if (pcConn) {
+        for (int i = 0; i < sent && i < MAX_FILES; i++) {
+          snprintf(fileStageText[i], sizeof(fileStageText[i]), "File %d sent", i + 1);
+          push(fileStageText[i], true);
         }
+        push("Sync complete", false);
+      }
+
+      // Display with auto-scroll: keep last [x] + next [-] in view
+      constexpr int lineH   = 22;
+      constexpr int listTop = 62;
+      constexpr int footerH = 32;
+      int maxVisible = (sh - listTop - footerH) / lineH;
+
+      int lastDone = 0;
+      for (int i = 0; i < numStages; i++) {
+        if (stages[i].done) lastDone = i;
+      }
+      int startIdx = 0;
+      if (numStages > maxVisible) {
+        startIdx = lastDone - maxVisible + 2;
+        if (startIdx < 0) startIdx = 0;
+        if (startIdx + maxVisible > numStages) startIdx = numStages - maxVisible;
+      }
+
+      for (int i = startIdx; i < numStages && (i - startIdx) < maxVisible; i++) {
+        int yPos = listTop + (i - startIdx) * lineH;
+        char line[52];
+        snprintf(line, sizeof(line), "%s %s",
+                 stages[i].done ? "[x]" : "[-]", stages[i].text);
+        drawClippedText(renderer, FONT_SMALL, 15, yPos, line, sw - 25, tc);
       }
 
       // Footer
       constexpr int bm = 28;
       clippedLine(renderer, 10, sh - bm - 2, sw - 10, sh - bm - 2, tc);
-      char countStr[48];
-      snprintf(countStr, sizeof(countStr), "Sent: %d / %d   Recv: %d   Esc: Cancel",
-               getSyncFilesSent(), getSyncTotalFiles(), getSyncFilesReceived());
+      char countStr[32];
+      snprintf(countStr, sizeof(countStr), "Sent: %d   Esc: Cancel", sent);
       drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 4, countStr, sw - 20, tc);
       break;
     }

@@ -40,6 +40,7 @@ void HalGPIO::startDeepSleep() {
 int HalGPIO::getBatteryPercentage() const {
   static const BatteryMonitor battery = BatteryMonitor(BAT_GPIO0);
   static int cachedPct = -1;
+  static float smoothedMv = -1.0f;
   static unsigned long lastReadMs = 0;
   static bool adcSettled = false;
 
@@ -53,9 +54,12 @@ int HalGPIO::getBatteryPercentage() const {
 
   unsigned long now = millis();
 
-  // ADC reads high for ~2 minutes after boot/wake — trust NVS cache during settling
+  const bool usbCharging = isUsbConnected();
+
+  // ADC reads high for ~2 minutes after boot/wake — trust NVS cache during settling.
+  // Skip this window when charging: voltage is actively changing and we want real readings.
   if (!adcSettled) {
-    if (now < 120000) {
+    if (!usbCharging && now < 120000) {
       // Still settling — return NVS cached value if we have one
       if (cachedPct >= 0) return cachedPct;
       // No NVS value at all — fall through to read ADC (better than showing nothing)
@@ -65,7 +69,30 @@ int HalGPIO::getBatteryPercentage() const {
 
   // Battery voltage changes on a timescale of minutes — no need to read every frame
   if (cachedPct < 0 || (now - lastReadMs) >= 30000) {
-    int newPct = battery.readPercentage();
+    float rawMv = static_cast<float>(battery.readMillivolts());
+
+    // EMA smoothing on millivolts (before the nonlinear polynomial).
+    // Alpha=0.3 means ~70% weight on history — takes ~5 reads (~2.5 min) to converge,
+    // which rejects brief voltage spikes from charging cycles / SPI / BLE noise.
+    // When charging, use alpha=1.0 (no smoothing) so voltage tracks in real time.
+    if (smoothedMv < 0) {
+      smoothedMv = rawMv;  // seed with first real reading
+    } else if (usbCharging) {
+      smoothedMv = rawMv;  // no smoothing while charging
+    } else {
+      smoothedMv = 0.3f * rawMv + 0.7f * smoothedMv;
+    }
+
+    int newPct = BatteryMonitor::percentageFromMillivolts(static_cast<uint16_t>(smoothedMv));
+
+    // Rate-limit drops only: max 2% decrease per read cycle (every 30s) on battery.
+    // Rising is uncapped so the display catches up quickly after charging.
+    // When charging via USB, drops are also uncapped (voltage actively rising anyway).
+    if (cachedPct >= 0) {
+      const int maxDrop = usbCharging ? 20 : 2;
+      if (newPct < cachedPct - maxDrop) newPct = cachedPct - maxDrop;
+    }
+
     if (newPct != cachedPct) {
       Preferences prefs;
       prefs.begin("battery", false);

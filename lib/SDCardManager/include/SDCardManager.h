@@ -42,6 +42,9 @@ class SDCardManager {
   bool openFileForWrite(const char* moduleName, const String& path, FsFile& file);
   bool removeDir(const char* path);
 
+  // Raw block-level access — used by USB MSC. Returns nullptr if not initialized.
+  SdCard* getCard() { return initialized ? sd.card() : nullptr; }
+
  static SDCardManager& getInstance() { return instance; }
 
  private:

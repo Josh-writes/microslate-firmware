@@ -43,7 +43,8 @@ UIState currentState = UIState::MAIN_MENU;
 int mainMenuSelection = 0;
 int selectedFileIndex = 0;
 int settingsSelection = 0;
-int bluetoothDeviceSelection = 0;  // For Bluetooth device selection
+int bluetoothDeviceSelection = 0;
+int pairedKeyboardSelection = 0;
 Orientation currentOrientation = Orientation::PORTRAIT;
 int charsPerLine = 40;
 bool screenDirty = true;
@@ -167,6 +168,7 @@ static void updateScreen() {
     case UIState::RENAME_FILE:       drawRenameScreen(renderer, gpio); break;
     case UIState::SETTINGS:          drawSettingsMenu(renderer, gpio); break;
     case UIState::BLUETOOTH_SETTINGS: drawBluetoothSettings(renderer, gpio); break;
+    case UIState::PAIRED_KEYBOARDS:   drawPairedKeyboardsMenu(renderer, gpio); break;
     case UIState::WIFI_SYNC:          drawSyncScreen(renderer, gpio); break;
     default: break;
   }
@@ -433,6 +435,7 @@ static void processPhysicalButtons() {
       break;
 
     case UIState::BLUETOOTH_SETTINGS:
+    case UIState::PAIRED_KEYBOARDS:
       if ((btnUp && !btnUpLast) || (btnRight && !btnRightLast)) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);

@@ -1,9 +1,10 @@
 # MicroSlate
 
 A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with any Bluetooth keyboard and saves notes to MicroSD.
+
 ## Features
 
-- **Bluetooth Keyboard** — BLE HID host, connects to any standard wireless keyboard. Tested with Logitech Keys-To-Go 2.
+- **Bluetooth Keyboard** — BLE HID host, connects to any standard wireless keyboard. Stores up to 4 keyboards; auto-cycles through them on reconnect. Tested with Logitech Keys-To-Go 2 and Keychron K3.
 - **Note Management** — browse, create, rename, and delete notes from an SD card
 - **Named Notes** — each note has a title stored in the file; shown in the browser and editable without touching body text
 - **Text Editor** — cursor navigation, word-wrap, fast e-paper refresh
@@ -28,42 +29,45 @@ A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with an
 
 ## Installation
 
-### Prerequisites
+### Option 1 — Browser installer (recommended)
+
+No software required. Works on Windows and Mac in Chrome or Edge.
+
+**[Install MicroSlate → typeslate.com/tools/microslate](https://typeslate.com/tools/microslate/)**
+
+Connect your Xteink X4 via USB, click **Install MicroSlate**, and select the device from the browser popup. Takes about 2 minutes.
+
+### Option 2 — Build from source
+
+Requires a Windows or Linux x86_64 machine (the ESP-IDF toolchain does not support Mac ARM or Raspberry Pi).
+
+**Prerequisites**
 
 - [PlatformIO](https://platformio.org/install/) (CLI or VS Code extension)
 - USB cable to connect to the Xteink X4
 
-### Build and Flash
-
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/Josh-writes/microslate-firmware
 cd xteink-writer-firmware
 
-# Build
-pio run
-
 # Build and upload (adjust port if needed)
-pio run --target upload
-```
-
-The upload port defaults to `COM5` in `platformio.ini`. To override:
-
-```bash
 pio run --target upload --upload-port /dev/ttyUSB0
 ```
 
-All libraries are included in the `lib/` directory. The only external dependency fetched automatically by PlatformIO is **NimBLE-Arduino** (BLE stack).
+The upload port defaults to `COM5` in `platformio.ini`.
+
+All libraries are included in the `lib/` directory. The only external dependency fetched automatically by PlatformIO is **esp-nimble-cpp** (BLE stack).
 
 ### First Boot
 
 1. Insert a FAT32-formatted MicroSD card
 2. Power on the device — it boots to the main menu
-3. Go to **Settings → Bluetooth Settings** and scan for your keyboard
+3. Go to **Settings → Bluetooth** and scan for your keyboard
 4. Select your keyboard from the list and press Enter to pair
 5. Return to the main menu and start writing
 
-The device remembers the paired keyboard and reconnects automatically on subsequent boots.
+The device remembers paired keyboards (up to 4) and reconnects automatically on subsequent boots. If multiple keyboards are stored, it cycles through them until one responds.
 
 ## Usage
 
@@ -138,10 +142,24 @@ Navigate with all four direction buttons (or Up/Down on keyboard). Press Enter (
 | Orientation | Portrait, Landscape CW, Inverted, Landscape CCW |
 | Dark Mode | Light / Dark |
 | Writing Mode | Normal, Typewriter, Pagination |
-| Bluetooth | Opens Bluetooth Settings submenu |
-| Clear Paired | Removes stored keyboard pairing |
+| Bluetooth | Opens Bluetooth scan to pair a new keyboard |
+| Paired Keyboards | Manage saved keyboards (connect, forget, disconnect) |
 
 All settings persist across reboots.
+
+### Paired Keyboards
+
+Shows all keyboards saved on the device (up to 4). The currently active keyboard is labelled **active**; the last used keyboard when none is connected is labelled **last**.
+
+| Key | Action |
+|-----|--------|
+| Up / Down | Navigate list |
+| Enter | Switch to selected keyboard |
+| D | Forget selected keyboard (removes pairing) |
+| Left | Disconnect selected keyboard (if currently active) |
+| Esc | Back to Settings |
+
+To pair a second keyboard, go to **Settings → Bluetooth**, scan, and connect. Both keyboards will then appear in the Paired Keyboards list. On each boot the device tries the last-used keyboard first, then works through the rest of the list until one connects.
 
 ### Bluetooth Settings
 
@@ -166,23 +184,32 @@ Back up all notes from the device to your PC over WiFi. The device and PC must b
    ```bash
    pip install requests
    ```
-3. Double-click **`sync\install_sync.bat`** to make the sync script run automatically on login
+3. Run the installer for your platform:
 
-That's it. The script runs silently in the background — no window, no tray icon. Notes are saved to `Documents\MicroSlate Notes\` by default (edit `LOCAL_DIR` in `microslate_sync.py` to change).
+**Windows** — double-click **`sync\install_sync.bat`**
 
-To stop auto-start later, double-click **`sync\uninstall_sync.bat`**.
+**macOS / Linux** — run in a terminal:
+```bash
+chmod +x sync/install_sync.sh && sync/install_sync.sh
+```
+
+That's it. The script starts immediately and will run silently in the background on every login. When a sync completes, a desktop notification lists the files that were downloaded (Windows balloon, macOS notification, or Linux `notify-send`). Notes are saved to `Documents/MicroSlate Notes/` by default (edit `LOCAL_DIR` in `microslate_sync.py` to change).
+
+To stop auto-start later:
+- **Windows** — double-click **`sync\uninstall_sync.bat`**
+- **macOS / Linux** — run `sync/uninstall_sync.sh`
 
 #### Syncing
 
 1. Select **Sync** from the main menu on the device
 2. **First time:** pick your WiFi network and enter the password. The device asks to save credentials.
 3. **After that:** the device auto-connects — just press Sync and wait
-4. The device shows "Waiting for PC..." while the background script syncs your notes
-5. When done, the device shows a summary and turns WiFi off automatically
+4. The device syncs automatically once connected — a progress log is shown on screen
+5. When done, the device shows a summary and turns WiFi off automatically. A desktop notification lists the downloaded files
 
 If the sync script isn't running, you can start it manually:
 ```bash
-python sync/microslate_sync.py
+python3 sync/microslate_sync.py
 ```
 
 #### How sync works
@@ -221,9 +248,11 @@ xteink-writer-firmware/
 │   ├── wifi_sync.cpp     — WiFi sync server and state machine
 │   └── config.h          — enums, buffer sizes, constants
 ├── sync/
-│   ├── microslate_sync.py   — PC sync script (Python)
+│   ├── microslate_sync.py   — PC sync script (Python, cross-platform)
 │   ├── install_sync.bat     — register auto-start on Windows login
-│   └── uninstall_sync.bat   — remove auto-start task
+│   ├── uninstall_sync.bat   — remove auto-start on Windows
+│   ├── install_sync.sh      — register auto-start on macOS / Linux
+│   └── uninstall_sync.sh    — remove auto-start on macOS / Linux
 ├── lib/                  — all hardware/display libraries (bundled)
 │   ├── GfxRenderer/
 │   ├── EpdFont/

@@ -42,7 +42,6 @@ static void loadSavedCredentials();
 static bool getSavedPassword(const char* ssid, char* passBuf, int passBufSize);
 static void saveCredential(const char* ssid, const char* pass);
 static void forgetCredential(const char* ssid);
-static bool getFirstSavedCredential(char* ssidBuf, int ssidBufSize, char* passBuf, int passBufSize);
 
 // --- Connecting state ---
 static unsigned long connectStartMs = 0;
@@ -52,14 +51,18 @@ static bool autoConnectAttempted = false;  // True if we tried auto-connect with
 
 // --- Sync activity tracking ---
 static int filesSent = 0;       // Files downloaded by PC (GET)
-static int filesReceived = 0;   // Files uploaded by PC (POST)
+static int filesReceived = 0;  // Files uploaded by PC (POST)
+static int totalFilesToSync = 0; // Total .txt files on device
 
 static constexpr int MAX_LOG_LINES = 6;
 static char syncLog[MAX_LOG_LINES][48];
 static int syncLogCount = 0;
 
+static bool pcConnected = false;
+
 static unsigned long lastHttpActivityMs = 0;
 static constexpr unsigned long SYNC_TIMEOUT_MS = 60000;  // 60s no HTTP → auto-disconnect
+static bool syncCompletePending = false;  // Set by handler, acted on in wifiSyncLoop
 
 // --- DONE state ---
 static unsigned long doneStartMs = 0;
@@ -69,6 +72,7 @@ static constexpr unsigned long DONE_DISPLAY_MS = 3000;  // 3s before returning t
 static void startHttpServer();
 static void stopHttpServer();
 static void beginScan();
+static void beginConnect(const char* ssid, const char* pass);
 static void enterSyncingState();
 static void enterDoneState();
 static void addSyncLogEntry(const char* fmt, const char* filename);
@@ -80,9 +84,14 @@ static void addSyncLogEntry(const char* fmt, const char* filename);
 static void resetSyncTracking() {
   filesSent = 0;
   filesReceived = 0;
+  totalFilesToSync = getFileCount();
   syncLogCount = 0;
+  syncCompletePending = false;
+  pcConnected = false;
   for (int i = 0; i < MAX_LOG_LINES; i++) syncLog[i][0] = '\0';
 }
+
+int getSyncTotalFiles() { return totalFilesToSync; }
 
 static void addSyncLogEntry(const char* fmt, const char* filename) {
   // Shift entries up if full
@@ -134,23 +143,6 @@ static bool getSavedPassword(const char* ssid, char* passBuf, int passBufSize) {
     }
   }
   return false;
-}
-
-static bool getFirstSavedCredential(char* ssidBuf, int ssidBufSize, char* passBuf, int passBufSize) {
-  int count = wifiPrefs.getInt("wifi_count", 0);
-  if (count <= 0) return false;
-  // Return the first saved network
-  char sKey[16], pKey[16];
-  snprintf(sKey, sizeof(sKey), "wifi_ssid_%d", 0);
-  snprintf(pKey, sizeof(pKey), "wifi_pass_%d", 0);
-  String ssid = wifiPrefs.getString(sKey, "");
-  String pass = wifiPrefs.getString(pKey, "");
-  if (ssid.length() == 0) return false;
-  strncpy(ssidBuf, ssid.c_str(), ssidBufSize - 1);
-  ssidBuf[ssidBufSize - 1] = '\0';
-  strncpy(passBuf, pass.c_str(), passBufSize - 1);
-  passBuf[passBufSize - 1] = '\0';
-  return true;
 }
 
 static void saveCredential(const char* ssid, const char* pass) {
@@ -294,6 +286,18 @@ static void processScanResults() {
   statusText[0] = '\0';
   screenDirty = true;
   DBG_PRINTF("[SYNC] Found %d networks\n", networkCount);
+
+  // Intelligent auto-connect: if the strongest available network is saved, auto-connect
+  if (networkCount > 0 && networks[0].saved) {
+    char savedPass[MAX_PASSWORD_LEN + 1];
+    if (getSavedPassword(networks[0].ssid, savedPass, sizeof(savedPass))) {
+      usedSavedPassword = true;
+      autoConnectAttempted = true;
+      beginConnect(networks[0].ssid, savedPass);
+      DBG_PRINTF("[SYNC] Auto-connecting to strongest saved network: %s\n", networks[0].ssid);
+      return;
+    }
+  }
 }
 
 // =========================================================================
@@ -357,14 +361,11 @@ static void pollConnection() {
     return;
   }
 
-  if (millis() - connectStartMs > 15000) {
+  if (millis() - connectStartMs > 25000) {
     WiFi.disconnect(true);
     strcpy(statusText, "Connection failed");
 
-    // If we used saved creds via auto-connect, prompt to forget
-    if (usedSavedPassword && autoConnectAttempted) {
-      syncState = SyncState::FORGET_PROMPT;
-    } else if (usedSavedPassword) {
+    if (usedSavedPassword) {
       syncState = SyncState::FORGET_PROMPT;
     } else {
       syncState = SyncState::CONNECT_FAILED;
@@ -381,6 +382,10 @@ static void pollConnection() {
 
 static void handleFileList() {
   lastHttpActivityMs = millis();
+  if (!pcConnected) {
+    pcConnected = true;
+    screenDirty = true;
+  }
 
   auto dir = SdMan.open("/notes");
   if (!dir || !dir.isDirectory()) {
@@ -449,7 +454,7 @@ static void handleFileDownload() {
 
   // Track: PC downloaded a file from device = "sent"
   filesSent++;
-  addSyncLogEntry("Sent: %s", filename.c_str());
+  screenDirty = true;
   DBG_PRINTF("[SYNC] Sent file: %s\n", filename.c_str());
 }
 
@@ -457,7 +462,7 @@ static void handleSyncComplete() {
   lastHttpActivityMs = millis();
   server->send(200, "text/plain", "OK");
   DBG_PRINTLN("[SYNC] PC signaled sync complete");
-  enterDoneState();
+  syncCompletePending = true;  // enterDoneState() called from wifiSyncLoop, not here
 }
 
 static void handleNotFound() {
@@ -615,7 +620,10 @@ void syncHandleKey(uint8_t keyCode, uint8_t modifiers) {
         DBG_PRINTF("[SYNC] Forgot credentials for %s\n", connectingSSID);
         beginScan();
       } else if (keyCode == HID_KEY_DOWN || keyCode == HID_KEY_ESCAPE) {
-        beginScan();
+        // Keep credentials — go to network list so user can retry manually
+        // rather than triggering auto-connect again immediately
+        syncState = SyncState::NETWORK_LIST;
+        screenDirty = true;
       }
       break;
   }
@@ -631,17 +639,7 @@ void wifiSyncStart() {
   wifiPrefs.begin("wifi_creds", false);
   resetSyncTracking();
 
-  // Auto-connect shortcut: if saved credentials exist, skip scanning
-  char savedSSID[33], savedPass[MAX_PASSWORD_LEN + 1];
-  if (getFirstSavedCredential(savedSSID, sizeof(savedSSID), savedPass, sizeof(savedPass))) {
-    usedSavedPassword = true;
-    autoConnectAttempted = true;
-    beginConnect(savedSSID, savedPass);
-    DBG_PRINTF("[SYNC] Auto-connecting to saved network: %s\n", savedSSID);
-  } else {
-    autoConnectAttempted = false;
-    beginScan();
-  }
+  beginScan();
 
   DBG_PRINTLN("[SYNC] WiFi sync started");
 }
@@ -682,8 +680,10 @@ void wifiSyncLoop() {
 
     case SyncState::SYNCING:
       if (server) server->handleClient();
-      // Safety timeout: 60s of no HTTP activity → auto-disconnect
-      if (millis() - lastHttpActivityMs > SYNC_TIMEOUT_MS) {
+      if (syncCompletePending) {
+        syncCompletePending = false;
+        enterDoneState();
+      } else if (millis() - lastHttpActivityMs > SYNC_TIMEOUT_MS) {
         DBG_PRINTLN("[SYNC] Timeout — no HTTP activity for 60s");
         enterDoneState();
       }
@@ -761,11 +761,6 @@ int getSyncFilesReceived() {
   return filesReceived;
 }
 
-int getSyncLogCount() {
-  return syncLogCount;
-}
-
-const char* getSyncLogLine(int i) {
-  if (i < 0 || i >= syncLogCount) return "";
-  return syncLog[i];
+bool isPcConnected() {
+  return pcConnected;
 }

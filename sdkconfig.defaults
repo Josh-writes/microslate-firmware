@@ -32,3 +32,4 @@ CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
 # PHY power down when idle
 #
 CONFIG_ESP_PHY_MAC_BB_PD=y
+

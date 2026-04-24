@@ -19,7 +19,6 @@ extern bool deleteConfirmPending;
 extern WritingMode writingMode;
 
 // External functions
-bool getStoredDevice(std::string& address, std::string& name);
 uint32_t getCurrentPasskey();
 bool isDeviceScanning();
 uint32_t getScanAgeMs();
@@ -55,6 +54,7 @@ extern int mainMenuSelection;
 extern int selectedFileIndex;
 extern int settingsSelection;
 extern int bluetoothDeviceSelection;
+extern int pairedKeyboardSelection;
 extern Orientation currentOrientation;
 extern int charsPerLine;
 extern char renameBuffer[];
@@ -480,9 +480,9 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   drawBattery(renderer, gpio);
   clippedLine(renderer, 5, 32, sw - 5, 32, !darkMode);
 
-  // Setting items: Orientation, Dark Mode, Writing Mode, Bluetooth, Clear Paired
+  // Setting items: Orientation, Dark Mode, Writing Mode, Bluetooth, Paired Keyboards
   static const char* labels[] = {
-    "Orientation", "Dark Mode", "Writing Mode", "Bluetooth", "Clear Paired"
+    "Orientation", "Dark Mode", "Writing Mode", "Bluetooth", "Paired Keyboards"
   };
   const int SETTINGS_COUNT = 5;
 
@@ -523,12 +523,10 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
         case WritingMode::PAGINATION: strcpy(val, "Pagination"); break;
       }
     } else if (i == 4) {
-      std::string storedAddr, storedName;
-      if (getStoredDevice(storedAddr, storedName)) {
-        snprintf(val, sizeof(val), "%s", storedName.c_str());
-      } else {
-        strcpy(val, "None");
-      }
+      int kbCount = getPairedKeyboardCount();
+      if (kbCount == 0) strcpy(val, "None");
+      else if (kbCount == 1) strcpy(val, "1 keyboard");
+      else snprintf(val, sizeof(val), "%d keyboards", kbCount);
     }
 
     if (val[0] != '\0') {
@@ -680,6 +678,60 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
   renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
 
+void drawPairedKeyboardsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
+  renderer.clearScreen();
+  int sw = renderer.getScreenWidth();
+  int sh = renderer.getScreenHeight();
+  bool tc = !darkMode;
+
+  if (darkMode) clippedFillRect(renderer, 0, 0, sw, sh, true);
+
+  drawClippedText(renderer, FONT_SMALL, 10, 5, "Paired Keyboards", 0, tc, EpdFontFamily::BOLD);
+  drawBattery(renderer, gpio);
+  clippedLine(renderer, 5, 32, sw - 5, 32, tc);
+
+  int count = getPairedKeyboardCount();
+  if (count == 0) {
+    drawClippedText(renderer, FONT_UI, 20, 60, "No paired keyboards", 0, tc);
+    drawClippedText(renderer, FONT_SMALL, 20, 85, "Go to Bluetooth to scan and connect", 0, tc);
+  } else {
+    std::string currentAddr = getCurrentDeviceAddress();
+    int lineH = 38;
+    int listTop = 44;
+
+    for (int i = 0; i < count; i++) {
+      std::string addr, name; uint8_t addrType;
+      getPairedKeyboard(i, addr, name, addrType);
+
+      int yPos = listTop + (i * lineH);
+      bool sel = (i == pairedKeyboardSelection);
+      bool active = (!currentAddr.empty() && currentAddr == addr);
+
+      if (sel) {
+        clippedFillRect(renderer, 5, yPos - 4, sw - 10, lineH - 4, tc);
+        drawClippedText(renderer, FONT_UI, 15, yPos, name.c_str(), sw - 90, !tc);
+      } else {
+        drawClippedText(renderer, FONT_UI, 15, yPos, name.c_str(), sw - 90, tc);
+      }
+
+      if (active) {
+        drawRightText(renderer, FONT_SMALL, sw - 10, yPos + 2, "active", sel ? !tc : tc);
+      } else if (!active && i == getLastUsedKeyboardIndex() && currentAddr.empty()) {
+        drawRightText(renderer, FONT_SMALL, sw - 10, yPos + 2, "last", sel ? !tc : tc);
+      }
+    }
+  }
+
+  constexpr int bm = 52;
+  if (sh > bm + 30) {
+    clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm, tc);
+    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 8,  "Enter:Connect  D:Forget", 0, tc);
+    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 22, "Left:Disconnect  Esc:Back", 0, tc);
+  }
+
+  renderer.beginRefresh(HalDisplay::FAST_REFRESH);
+}
+
 // Helper: draw signal strength indicator (1-4 bars)
 static void drawSignalBars(GfxRenderer& r, int x, int y, int rssi, bool color) {
   // RSSI to bars: > -50 = 4, > -65 = 3, > -75 = 2, else 1
@@ -776,12 +828,10 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       renderer.drawRect(15, 62, sw - 30, 30, tc);
 
       // Show dots for password characters (privacy)
-      const char* pass = getPasswordBuffer();
       int pLen = getPasswordLen();
-      char dots[MAX_TITLE_LEN + 1];
-      int dotLen = pLen < MAX_TITLE_LEN ? pLen : MAX_TITLE_LEN;
-      for (int i = 0; i < dotLen; i++) dots[i] = '*';
-      dots[dotLen] = '\0';
+      char dots[64];
+      for (int i = 0; i < pLen; i++) dots[i] = '*';
+      dots[pLen] = '\0';
       drawClippedText(renderer, FONT_UI, 20, 66, dots, sw - 50, tc);
 
       // Cursor
@@ -806,26 +856,59 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       const char* ip = getSyncStatusText();
       drawClippedText(renderer, FONT_SMALL, 20, 42, ip, sw - 40, tc, EpdFontFamily::BOLD);
 
-      int logCount = getSyncLogCount();
-      if (logCount == 0) {
-        drawClippedText(renderer, FONT_UI, 20, 75, "Waiting for PC...", sw - 40, tc);
-        drawClippedText(renderer, FONT_SMALL, 20, 110, "Run microslate_sync.py on PC", sw - 40, tc);
-        drawClippedText(renderer, FONT_SMALL, 20, 130, "See README for setup", sw - 40, tc);
-      } else {
-        // Show activity log
-        int yPos = 68;
-        for (int i = 0; i < logCount && yPos < sh - 50; i++) {
-          drawClippedText(renderer, FONT_SMALL, 20, yPos, getSyncLogLine(i), sw - 40, tc);
-          yPos += 20;
+      int sent    = getSyncFilesSent();
+      bool pcConn = isPcConnected();
+
+      // Build the stage list. Static so string pointers remain valid after this scope.
+      static char fileStageText[MAX_FILES][16];
+      static struct { const char* text; bool done; } stages[MAX_FILES + 3];
+      int numStages = 0;
+
+      auto push = [&](const char* text, bool done) {
+        if (numStages < MAX_FILES + 3) stages[numStages++] = { text, done };
+      };
+
+      push("Connected to WiFi", true);
+      push("PC connected",      pcConn);
+
+      if (pcConn) {
+        for (int i = 0; i < sent && i < MAX_FILES; i++) {
+          snprintf(fileStageText[i], sizeof(fileStageText[i]), "File %d sent", i + 1);
+          push(fileStageText[i], true);
         }
+        push("Sync complete", false);
+      }
+
+      // Display with auto-scroll: keep last [x] + next [-] in view
+      constexpr int lineH   = 22;
+      constexpr int listTop = 62;
+      constexpr int footerH = 32;
+      int maxVisible = (sh - listTop - footerH) / lineH;
+
+      int lastDone = 0;
+      for (int i = 0; i < numStages; i++) {
+        if (stages[i].done) lastDone = i;
+      }
+      int startIdx = 0;
+      if (numStages > maxVisible) {
+        startIdx = lastDone - maxVisible + 2;
+        if (startIdx < 0) startIdx = 0;
+        if (startIdx + maxVisible > numStages) startIdx = numStages - maxVisible;
+      }
+
+      for (int i = startIdx; i < numStages && (i - startIdx) < maxVisible; i++) {
+        int yPos = listTop + (i - startIdx) * lineH;
+        char line[52];
+        snprintf(line, sizeof(line), "%s %s",
+                 stages[i].done ? "[x]" : "[-]", stages[i].text);
+        drawClippedText(renderer, FONT_SMALL, 15, yPos, line, sw - 25, tc);
       }
 
       // Footer
       constexpr int bm = 28;
       clippedLine(renderer, 10, sh - bm - 2, sw - 10, sh - bm - 2, tc);
-      char countStr[48];
-      snprintf(countStr, sizeof(countStr), "Sent: %d  Recv: %d   Esc: Cancel",
-               getSyncFilesSent(), getSyncFilesReceived());
+      char countStr[32];
+      snprintf(countStr, sizeof(countStr), "Sent: %d   Esc: Cancel", sent);
       drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 4, countStr, sw - 20, tc);
       break;
     }
@@ -863,3 +946,4 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
 
   renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
+

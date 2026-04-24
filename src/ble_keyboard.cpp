@@ -21,6 +21,7 @@ static bool connectToKeyboard = false;
 static std::string keyboardAddress = "";
 static uint8_t keyboardAddressType = 0;
 static uint8_t lastReport[8] = {0};
+static uint8_t inputReportId = 0;   // Non-zero if keyboard prefixes reports with a report ID
 
 // NVS storage for persistent pairing
 static Preferences prefs;
@@ -29,23 +30,14 @@ static Preferences prefs;
 bool autoReconnectEnabled = true;
 
 // Reconnection backoff
-static unsigned long reconnectDelay = 10000;  // Start at 10s (was 5s) — less aggressive
+static unsigned long reconnectDelay = 5000;   // 5s initial — gives keyboard time to release old connection after deep sleep
 static unsigned long lastReconnectAttempt = 0;
 static constexpr unsigned long MAX_RECONNECT_DELAY = 120000;  // Cap at 2min (was 60s)
 
-// BLE connection parameters (in 1.25ms units)
-// Active typing: 15-20ms interval — maximise keystroke responsiveness
-static constexpr uint16_t CONN_INTERVAL_ACTIVE_MIN = 12;   // 15ms
-static constexpr uint16_t CONN_INTERVAL_ACTIVE_MAX = 16;   // 20ms
-// Idle: 100-200ms interval — radio mostly sleeps between events
-static constexpr uint16_t CONN_INTERVAL_IDLE_MIN   = 80;   // 100ms
-static constexpr uint16_t CONN_INTERVAL_IDLE_MAX   = 160;  // 200ms
-static constexpr uint16_t CONN_SLAVE_LATENCY_ACTIVE = 0;   // No skipped events while typing
-static constexpr uint16_t CONN_SLAVE_LATENCY_IDLE   = 4;   // Keyboard can skip 4 events when idle
-static constexpr uint16_t CONN_SUPERVISION_TIMEOUT  = 400;  // 4s (10ms units)
-static constexpr unsigned long BLE_IDLE_SWITCH_MS   = 3000; // Switch to idle params after 3s no keystrokes
+// Multi-keyboard cycling: index of the keyboard to try on the next auto-reconnect attempt
+static int reconnectKeyboardIndex = 0;
 
-// Activity tracking for adaptive connection parameters
+// Activity tracking (used by connect task to initialise idle timer)
 static unsigned long lastBleKeystrokeMs = 0;
 static bool bleConnIdleMode = false;
 
@@ -68,6 +60,7 @@ static uint32_t currentPasskey = 0;
 
 // Forward declarations
 static bool setupHidConnection();
+int getLastUsedKeyboardIndex();
 
 // Helper: upsert device into discovered list
 static void upsertDevice(const BleDeviceInfo& info) {
@@ -93,12 +86,18 @@ static void pruneStaleDevices() {
 // Keyboard notification callback
 static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
                               uint8_t* pData, size_t length, bool isNotify) {
-  // Keyboard reports can be 7 or 8 bytes
-  // 8-byte: [Modifiers] [Reserved] [Key1-Key6]  (standard)
-  // 7-byte: [Modifiers] [Key1-Key6]              (compact, used by Keys-To-Go 2)
+  // Strip report ID prefix if the keyboard uses one (learned during HID discovery).
+  // e.g. 9-byte: [ReportID][Mod][Reserved][K1-K6]  →  strip to 8-byte standard
+  //      8-byte: [ReportID][Mod][K1-K6]             →  strip to 7-byte compact
+  if (inputReportId != 0 && length > 0 && pData[0] == inputReportId) {
+    pData++;
+    length--;
+  }
 
-  if (length != 7 && length != 8) {
-    DBG_PRINTF("[KB-Notify] Unexpected length %d, skipping\n", length);
+  // Must be 7 or 8 bytes after stripping. Consumer-control / media-key reports
+  // from other report IDs arrive here too — silently ignore them.
+  if (length < 7 || length > 8) {
+    DBG_PRINTF("[KB-Notify] Ignoring %d-byte report (not keyboard format)\n", (int)length);
     return;
   }
 
@@ -107,13 +106,12 @@ static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
 
   // Normalize to 8-byte format: [Mod] [Reserved=0] [Key1-Key6]
   if (length == 8) {
-    // Already 8-byte format
     memcpy(newReport, pData, 8);
   } else {
-    // 7-byte format: convert to 8-byte by inserting reserved byte
+    // 7-byte compact: insert reserved byte
     newReport[0] = pData[0];  // Modifiers
     newReport[1] = 0;          // Reserved
-    memcpy(&newReport[2], &pData[1], 6);  // Key codes
+    memcpy(&newReport[2], &pData[1], 6);
   }
 
 #ifndef RELEASE_BUILD
@@ -186,17 +184,13 @@ static class ClientCallbacks : public NimBLEClientCallbacks {
 
   bool onConnParamsUpdateRequest(NimBLEClient* pClient,
                                   const ble_gap_upd_params* params) override {
-    // Don't blindly accept the keyboard's requested interval — enforce our floor.
-    uint16_t floorMin = bleConnIdleMode ? CONN_INTERVAL_IDLE_MIN : CONN_INTERVAL_ACTIVE_MIN;
-    uint16_t floorMax = bleConnIdleMode ? CONN_INTERVAL_IDLE_MAX : CONN_INTERVAL_ACTIVE_MAX;
-    uint16_t latency  = bleConnIdleMode ? CONN_SLAVE_LATENCY_IDLE : CONN_SLAVE_LATENCY_ACTIVE;
-    uint16_t itvlMin = (params->itvl_min > floorMin) ? params->itvl_min : floorMin;
-    uint16_t itvlMax = (params->itvl_max > floorMax) ? params->itvl_max : floorMax;
-    if (itvlMin > itvlMax) itvlMax = itvlMin;
-
-    pClient->updateConnParams(itvlMin, itvlMax,
-                               latency, CONN_SUPERVISION_TIMEOUT);
-    return true;
+    // Reject the keyboard's connection parameter update request.
+    // Keychron keyboards send a conn param update on the first keypress (idle→active
+    // interval switch). Returning true makes NimBLE substitute our m_connParams into
+    // the response, which mismatches what the Keychron expects and causes an immediate
+    // crash/disconnect. Returning false tells the keyboard to keep the current params
+    // (30–50 ms interval negotiated at connect time), which works fine for all keyboards.
+    return false;
   }
 
   // Security callbacks (merged from NimBLESecurityCallbacks — removed in 2.x)
@@ -260,6 +254,7 @@ static bool setupHidConnection() {
 
   // Find input report via Report Reference descriptor (type=1 means Input)
   pInputReportChar = nullptr;
+  inputReportId = 0;
   const auto& chars = pRemoteService->getCharacteristics(true);  // true = refresh from device
   DBG_PRINTF("[BLE] Found %d characteristics in HID service\n", (int)chars.size());
 
@@ -278,7 +273,8 @@ static bool setupHidConnection() {
                      (uint8_t)refData[0], (uint8_t)refData[1]);
           if ((uint8_t)refData[1] == 1) {
             pInputReportChar = chr;
-            DBG_PRINTLN("[BLE]     -> Selected as input report");
+            inputReportId = (uint8_t)refData[0];  // 0 = no ID prefix, non-zero = ID byte present
+            DBG_PRINTF("[BLE]     -> Selected as input report (reportId=%d)\n", inputReportId);
             break;
           }
         }
@@ -353,6 +349,19 @@ static void bleConnectTask(void* param) {
   DBG_PRINTF("[BLE-Task] Connecting to %s type=%d\n",
              keyboardAddress.c_str(), keyboardAddressType);
 
+  // Guard: if the link layer is already up (bleState flipped to DISCONNECTED spuriously
+  // while the BLE connection is still alive), don't call connect() again — that crashes
+  // the NimBLE stack. Just re-sync state and exit.
+  if (pClient && pClient->isConnected()) {
+    DBG_PRINTLN("[BLE-Task] Already connected - re-syncing state");
+    bleState = BLEState::CONNECTED;
+    lastBleKeystrokeMs = millis();
+    bleConnIdleMode = false;
+    connectTaskHandle = nullptr;
+    vTaskDelete(NULL);
+    return;
+  }
+
   // Create/reuse client
   if (!pClient) {
     pClient = NimBLEDevice::createClient();
@@ -362,6 +371,10 @@ static void bleConnectTask(void* param) {
 
   // Step 1: Connect (blocks this task, main loop continues)
   NimBLEAddress addr(keyboardAddress, keyboardAddressType);
+  // Delete any stored bond before connecting — forces a fresh "Just Works" pairing
+  // instead of an encrypted reconnect. Prevents a NimBLE security-state crash when
+  // the keyboard still holds a stale connection from a previous unclean disconnect.
+  NimBLEDevice::deleteBond(addr);
   if (!pClient->connect(addr, true)) {
     DBG_PRINTLN("[BLE-Task] Connection failed");
     bleState = BLEState::DISCONNECTED;
@@ -404,28 +417,31 @@ static void bleConnectTask(void* param) {
     return;
   }
 
-  // Step 5: Store device and mark connected
-  std::string storedAddr, storedName;
-  if (!getStoredDevice(storedAddr, storedName) || storedAddr != keyboardAddress) {
+  // Step 5: Mark connected immediately so bleLoop doesn't start a second connect task.
+  // Do this BEFORE storePairedDevice (NVS write) to minimise the window where the link
+  // is live but bleState is still CONNECTING.
+  bleState = BLEState::CONNECTED;
+  reconnectDelay = 5000;  // Reset backoff after successful connection
+  bleConnIdleMode = false;
+  lastBleKeystrokeMs = millis();  // Start the 3s idle timer from now, not from boot
+  DBG_PRINTLN("[BLE-Task] Keyboard ready!");
+
+  // NOTE: updateConnParams() is intentionally NOT called here.  Calling it immediately
+  // after connecting triggers a reentrancy crash with Keychron keyboards (the keyboard
+  // sends its own BLE_GAP_EVENT_CONN_UPDATE_REQ at the same time).  The adaptive params
+  // logic in bleLoop() handles this safely from the main task after a stable delay.
+
+  // Store device to NVS for future reconnects, then reset cycling index to this keyboard
+  {
     std::string devName = keyboardAddress;
     for (auto& d : discoveredDevices) {
-      if (d.address == keyboardAddress) {
-        devName = d.name;
-        break;
-      }
+      if (d.address == keyboardAddress) { devName = d.name; break; }
     }
     storePairedDevice(keyboardAddress, devName);
+    // After a successful connect, next auto-reconnect attempt starts from this keyboard
+    int newLastKb = getLastUsedKeyboardIndex();
+    reconnectKeyboardIndex = (newLastKb >= 0) ? newLastKb : 0;
   }
-
-  // Request our preferred connection parameters (active typing mode)
-  pClient->updateConnParams(CONN_INTERVAL_ACTIVE_MIN, CONN_INTERVAL_ACTIVE_MAX,
-                             CONN_SLAVE_LATENCY_ACTIVE, CONN_SUPERVISION_TIMEOUT);
-  bleConnIdleMode = false;
-  lastBleKeystrokeMs = millis();
-
-  DBG_PRINTLN("[BLE-Task] Keyboard ready!");
-  bleState = BLEState::CONNECTED;
-  reconnectDelay = 10000;  // Reset backoff after successful connection
 
   connectTaskHandle = nullptr;
   vTaskDelete(NULL);
@@ -437,7 +453,49 @@ static void startConnectTask() {
     DBG_PRINTLN("[BLE] Connect task already running");
     return;
   }
-  xTaskCreate(bleConnectTask, "ble_conn", 8192, NULL, 1, &connectTaskHandle);
+  // 20480 bytes: Logitech has a complex service tree (keyboard + media + battery reports
+  // + many descriptors). NimBLE 2.x uses more per-call stack than 1.4.x — 12288 was
+  // sufficient before but overflows during full service discovery on the Logitech.
+  xTaskCreate(bleConnectTask, "ble_conn", 20480, NULL, 1, &connectTaskHandle);
+}
+
+// --- NVS multi-keyboard helpers ---
+
+static void nvs_kbKey(char* buf, int idx, const char* suffix) {
+  snprintf(buf, 16, "kb_%d_%s", idx, suffix);
+}
+
+static int nvs_loadCount() {
+  return (int)prefs.getUChar("kb_count", 0);
+}
+
+static std::string nvs_loadAddr(int idx) {
+  char key[16]; nvs_kbKey(key, idx, "addr");
+  return std::string(prefs.getString(key, "").c_str());
+}
+
+static std::string nvs_loadName(int idx) {
+  char key[16]; nvs_kbKey(key, idx, "name");
+  return std::string(prefs.getString(key, "").c_str());
+}
+
+static uint8_t nvs_loadType(int idx) {
+  char key[16]; nvs_kbKey(key, idx, "type");
+  return prefs.getUChar(key, 0);
+}
+
+static void nvs_saveKb(int idx, const std::string& addr, const std::string& name, uint8_t type) {
+  char key[16];
+  nvs_kbKey(key, idx, "addr"); prefs.putString(key, addr.c_str());
+  nvs_kbKey(key, idx, "name"); prefs.putString(key, name.c_str());
+  nvs_kbKey(key, idx, "type"); prefs.putUChar(key, type);
+}
+
+static void nvs_clearSlot(int idx) {
+  char key[16];
+  nvs_kbKey(key, idx, "addr"); prefs.remove(key);
+  nvs_kbKey(key, idx, "name"); prefs.remove(key);
+  nvs_kbKey(key, idx, "type"); prefs.remove(key);
 }
 
 // --- Public API ---
@@ -448,12 +506,20 @@ uint32_t getCurrentPasskey() {
 
 void bleSetup() {
   NimBLEDevice::init("MicroSlate");
-  // bonding=true, MITM=FALSE, SC=FALSE - "Just Works" pairing
+  // bond=true, MITM=false (we don't require it), SC=false (legacy compat for Logitech etc.)
+  // DISPLAY_YESNO: we can show a number and confirm — lets keyboards that *do* want
+  // numeric comparison (Apple Magic Keyboard, etc.) initiate it while still falling
+  // back to "Just Works" for keyboards that don't need it.
   NimBLEDevice::setSecurityAuth(true, false, false);
-  // NO_INPUT_OUTPUT forces "Just Works" pairing (no passkey)
+  // NO_INPUT_OUTPUT = "Just Works" pairing — works for both Logitech and Keychron
+  // since MITM=false means we never require authenticated pairing regardless of IO cap.
+  // DISPLAY_YESNO was tried for Keychron but broke Logitech (bond/security-state mismatch
+  // in NimBLE 2.x caused crashes on reconnect). Just Works is sufficient for all targets.
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
-  NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
-  NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+  // ENC-only key distribution — omit ID (IRK) which some keyboards don't support
+  // and which caused bond-validation failures after the security param change.
+  NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC);
+  NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC);
   NimBLEDevice::setPower(-9);  // -9dBm — lowest verified working power level
 
   prefs.begin("ble_kb", false);
@@ -464,16 +530,41 @@ void bleSetup() {
   scan->setWindow(449);
   scan->setActiveScan(true);
 
-  // Check for stored device to auto-reconnect
-  std::string storedAddr, storedName;
-  if (getStoredDevice(storedAddr, storedName) && !storedAddr.empty()) {
-    keyboardAddress = storedAddr;
-    keyboardAddressType = prefs.getUChar("addrType", 0);
-    connectToKeyboard = true;
-    DBG_PRINTF("[BLE] Will reconnect to: %s type=%d\n", storedAddr.c_str(), keyboardAddressType);
+  // Migrate from old single-keyboard NVS format on first boot after firmware update.
+  // Sentinel: if "kb_count" key is absent (returns 0xFF default), run migration.
+  if (prefs.getUChar("kb_count", 0xFF) == 0xFF) {
+    String oldAddr = prefs.getString("addr", "");
+    if (oldAddr.length() > 0) {
+      String oldName = prefs.getString("name", oldAddr);
+      uint8_t oldType = prefs.getUChar("addrType", 0);
+      nvs_saveKb(0, std::string(oldAddr.c_str()), std::string(oldName.c_str()), oldType);
+      prefs.putUChar("kb_count", 1);
+      prefs.putUChar("last_kb", 0);
+      prefs.remove("addr");
+      prefs.remove("name");
+      prefs.remove("addrType");
+      DBG_PRINTLN("[BLE] Migrated single-keyboard NVS to multi-keyboard format");
+    } else {
+      prefs.putUChar("kb_count", 0);
+    }
+  }
+
+  // Prime auto-reconnect: start with last-used keyboard, give it 5s before first attempt
+  // so the keyboard's supervision timeout from the previous session has time to expire.
+  int pairedCount = nvs_loadCount();
+  int lastKb = (pairedCount > 0) ? (int)prefs.getUChar("last_kb", 0) : -1;
+  if (lastKb >= pairedCount) lastKb = 0;
+  reconnectKeyboardIndex = (lastKb >= 0) ? lastKb : 0;
+
+  if (pairedCount > 0 && lastKb >= 0) {
+    keyboardAddress = nvs_loadAddr(lastKb);
+    keyboardAddressType = nvs_loadType(lastKb);
+    lastReconnectAttempt = millis();
+    DBG_PRINTF("[BLE] Will reconnect to: %s (in %lums, %d paired total)\n",
+               keyboardAddress.c_str(), reconnectDelay, pairedCount);
   } else {
     bleState = BLEState::DISCONNECTED;
-    DBG_PRINTLN("[BLE] No stored device");
+    DBG_PRINTLN("[BLE] No paired keyboards");
   }
 }
 
@@ -495,37 +586,26 @@ void bleLoop() {
     return;
   }
 
-  // Adaptive BLE connection parameters: fast interval while typing, slow when idle.
-  // Saves significant radio power during pauses between typing bursts.
-  if (bleState == BLEState::CONNECTED && pClient && pClient->isConnected()) {
-    unsigned long now = millis();
-    if (!bleConnIdleMode && (now - lastBleKeystrokeMs > BLE_IDLE_SWITCH_MS)) {
-      // No keystrokes for 3s — switch to slow polling to save radio power
-      pClient->updateConnParams(CONN_INTERVAL_IDLE_MIN, CONN_INTERVAL_IDLE_MAX,
-                                 CONN_SLAVE_LATENCY_IDLE, CONN_SUPERVISION_TIMEOUT);
-      bleConnIdleMode = true;
-    } else if (bleConnIdleMode && (now - lastBleKeystrokeMs <= BLE_IDLE_SWITCH_MS)) {
-      // Keystroke arrived — switch back to fast polling, no skipped events
-      pClient->updateConnParams(CONN_INTERVAL_ACTIVE_MIN, CONN_INTERVAL_ACTIVE_MAX,
-                                 CONN_SLAVE_LATENCY_ACTIVE, CONN_SUPERVISION_TIMEOUT);
-      bleConnIdleMode = false;
-    }
-  }
-
-  // Auto-reconnect to stored device (exponential backoff)
+  // Auto-reconnect: cycle through all paired keyboards with exponential backoff.
+  // Backoff increases only after a full cycle through all keyboards.
   if (bleState == BLEState::DISCONNECTED && autoReconnectEnabled && connectTaskHandle == nullptr) {
-    std::string storedAddr, storedName;
-    if (getStoredDevice(storedAddr, storedName) && !storedAddr.empty()) {
+    int count = nvs_loadCount();
+    if (count > 0) {
       unsigned long now = millis();
       if (now - lastReconnectAttempt >= reconnectDelay) {
-        lastReconnectAttempt = now;
-        keyboardAddress = storedAddr;
-        keyboardAddressType = prefs.getUChar("addrType", 0);
+        int idx = reconnectKeyboardIndex % count;
+        keyboardAddress = nvs_loadAddr(idx);
+        keyboardAddressType = nvs_loadType(idx);
         connectToKeyboard = true;
-        DBG_PRINTF("[BLE] Auto-reconnect: %s (retry in %lums)\n",
-                   storedAddr.c_str(), reconnectDelay);
-        reconnectDelay = (reconnectDelay * 2 > MAX_RECONNECT_DELAY)
-                           ? MAX_RECONNECT_DELAY : reconnectDelay * 2;
+        lastReconnectAttempt = now;
+        DBG_PRINTF("[BLE] Auto-reconnect: trying keyboard %d/%d (%s)\n",
+                   idx + 1, count, keyboardAddress.c_str());
+        reconnectKeyboardIndex = (reconnectKeyboardIndex + 1) % count;
+        // Increase backoff only after a full cycle through all keyboards
+        if (reconnectKeyboardIndex == 0) {
+          reconnectDelay = (reconnectDelay * 2 > MAX_RECONNECT_DELAY)
+                             ? MAX_RECONNECT_DELAY : reconnectDelay * 2;
+        }
       }
     }
   }
@@ -620,23 +700,117 @@ std::string getCurrentDeviceAddress() {
   return keyboardAddress;
 }
 
+// --- Multi-keyboard public API ---
+
+int getPairedKeyboardCount() {
+  return nvs_loadCount();
+}
+
+bool getPairedKeyboard(int index, std::string& addr, std::string& name, uint8_t& addrType) {
+  if (index < 0 || index >= nvs_loadCount()) return false;
+  addr = nvs_loadAddr(index);
+  name = nvs_loadName(index);
+  addrType = nvs_loadType(index);
+  return !addr.empty();
+}
+
+int getLastUsedKeyboardIndex() {
+  int count = nvs_loadCount();
+  if (count == 0) return -1;
+  int last = (int)prefs.getUChar("last_kb", 0);
+  return (last < count) ? last : 0;
+}
+
+bool removePairedKeyboard(int index) {
+  int count = nvs_loadCount();
+  if (index < 0 || index >= count) return false;
+
+  // Delete NimBLE bond for the keyboard being removed
+  std::string addr = nvs_loadAddr(index);
+  if (!addr.empty()) {
+    NimBLEDevice::deleteBond(NimBLEAddress(addr, nvs_loadType(index)));
+  }
+
+  // Shift remaining slots down
+  for (int i = index; i < count - 1; i++) {
+    nvs_saveKb(i, nvs_loadAddr(i + 1), nvs_loadName(i + 1), nvs_loadType(i + 1));
+  }
+  nvs_clearSlot(count - 1);
+  prefs.putUChar("kb_count", (uint8_t)(count - 1));
+
+  // Fix last_kb
+  int lastKb = (int)prefs.getUChar("last_kb", 0);
+  if (count - 1 == 0) {
+    prefs.remove("last_kb");
+  } else if (lastKb >= count - 1) {
+    prefs.putUChar("last_kb", 0);
+  } else if (lastKb > index) {
+    prefs.putUChar("last_kb", (uint8_t)(lastKb - 1));
+  }
+
+  // If this was the current connection, reset state
+  if (keyboardAddress == addr) {
+    if (pClient && pClient->isConnected()) pClient->disconnect();
+    keyboardAddress = "";
+  }
+
+  reconnectKeyboardIndex = 0;
+  DBG_PRINTF("[BLE] Removed paired keyboard slot %d (%s)\n", index, addr.c_str());
+  return true;
+}
+
+void connectToPairedKeyboard(int index) {
+  int count = nvs_loadCount();
+  if (index < 0 || index >= count) return;
+
+  stopDeviceScan();
+  if (pClient && pClient->isConnected()) pClient->disconnect();
+
+  keyboardAddress = nvs_loadAddr(index);
+  keyboardAddressType = nvs_loadType(index);
+  prefs.putUChar("last_kb", (uint8_t)index);
+  reconnectKeyboardIndex = (count > 1) ? (index + 1) % count : 0;
+  reconnectDelay = 5000;
+  connectToKeyboard = true;
+  DBG_PRINTF("[BLE] Switching to paired keyboard %d: %s\n", index, keyboardAddress.c_str());
+}
+
 void storePairedDevice(const std::string& address, const std::string& name) {
-  prefs.putString("addr", address.c_str());
-  prefs.putString("name", name.c_str());
-  prefs.putUChar("addrType", keyboardAddressType);
-  DBG_PRINTF("[BLE] Stored to NVS: %s (%s) type=%d\n",
-             address.c_str(), name.c_str(), keyboardAddressType);
+  int count = nvs_loadCount();
+
+  // Update name if already stored
+  for (int i = 0; i < count; i++) {
+    if (nvs_loadAddr(i) == address) {
+      nvs_saveKb(i, address, name, keyboardAddressType);
+      prefs.putUChar("last_kb", (uint8_t)i);
+      DBG_PRINTF("[BLE] Updated paired keyboard slot %d: %s\n", i, name.c_str());
+      return;
+    }
+  }
+
+  int idx;
+  if (count < MAX_PAIRED_KEYBOARDS) {
+    idx = count;
+    prefs.putUChar("kb_count", (uint8_t)(count + 1));
+  } else {
+    // List full: evict slot 0 (oldest), shift everything down
+    for (int i = 0; i < MAX_PAIRED_KEYBOARDS - 1; i++) {
+      nvs_saveKb(i, nvs_loadAddr(i + 1), nvs_loadName(i + 1), nvs_loadType(i + 1));
+    }
+    idx = MAX_PAIRED_KEYBOARDS - 1;
+  }
+
+  nvs_saveKb(idx, address, name, keyboardAddressType);
+  prefs.putUChar("last_kb", (uint8_t)idx);
+  DBG_PRINTF("[BLE] Stored new paired keyboard slot %d: %s (%s)\n",
+             idx, name.c_str(), address.c_str());
 }
 
 bool getStoredDevice(std::string& address, std::string& name) {
-  String addr = prefs.getString("addr", "");
-  if (addr.length() > 0) {
-    address = addr.c_str();
-    String n = prefs.getString("name", "");
-    name = (n.length() > 0) ? n.c_str() : address;
-    return true;
-  }
-  return false;
+  int idx = getLastUsedKeyboardIndex();
+  if (idx < 0) return false;
+  uint8_t addrType;
+  return getPairedKeyboard(idx, address, name, addrType);
 }
 
 bool isDeviceScanning() {
@@ -661,10 +835,12 @@ void clearAllBluetoothBonds() {
 }
 
 void clearStoredDevice() {
-  prefs.remove("addr");
-  prefs.remove("name");
-  prefs.remove("addrType");
-  DBG_PRINTLN("[BLE] Cleared stored device from NVS");
+  int count = nvs_loadCount();
+  for (int i = 0; i < count; i++) nvs_clearSlot(i);
+  prefs.putUChar("kb_count", 0);
+  prefs.remove("last_kb");
   NimBLEDevice::deleteAllBonds();
-  DBG_PRINTLN("[BLE] Cleared all stored bonds");
+  keyboardAddress = "";
+  reconnectKeyboardIndex = 0;
+  DBG_PRINTLN("[BLE] Cleared all paired keyboards and bonds");
 }

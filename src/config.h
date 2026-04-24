@@ -12,6 +12,7 @@ enum class UIState {
   NEW_FILE,
   SETTINGS,
   BLUETOOTH_SETTINGS,
+  PAIRED_KEYBOARDS,
   WIFI_SYNC
 };
 

@@ -105,7 +105,7 @@ void refreshFileList() {
     }
 
     int nameLen = strlen(name);
-    if (nameLen > 4 && strcmp(name + nameLen - 4, ".txt") == 0) {
+    if (nameLen > 4 && strcasecmp(name + nameLen - 4, ".txt") == 0) {
       strncpy(fileList[fileCount].filename, name, MAX_FILENAME_LEN - 1);
       fileList[fileCount].filename[MAX_FILENAME_LEN - 1] = '\0';
 

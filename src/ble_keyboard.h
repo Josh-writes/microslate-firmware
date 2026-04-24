@@ -29,7 +29,17 @@ std::string getCurrentDeviceAddress();
 // Global flag to control auto-reconnect behavior
 extern bool autoReconnectEnabled;
 
-// Functions for managing stored device
+// Max keyboards that can be stored
+static constexpr int MAX_PAIRED_KEYBOARDS = 4;
+
+// Multi-keyboard storage API
+int  getPairedKeyboardCount();
+bool getPairedKeyboard(int index, std::string& addr, std::string& name, uint8_t& addrType);
+int  getLastUsedKeyboardIndex();   // -1 if none stored
+bool removePairedKeyboard(int index);
+void connectToPairedKeyboard(int index);
+
+// Internal helpers (also used by ui_renderer for backwards compat)
 void storePairedDevice(const std::string& address, const std::string& name);
 bool getStoredDevice(std::string& address, std::string& name);
 void clearStoredDevice();

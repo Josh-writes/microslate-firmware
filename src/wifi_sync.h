@@ -33,11 +33,11 @@ const char* getPasswordBuffer();
 int  getPasswordLen();
 const char* getSyncStatusText();
 
-// Sync activity log (for SYNCING/DONE screens)
+// Sync progress
 int  getSyncFilesSent();
 int  getSyncFilesReceived();
-int  getSyncLogCount();
-const char* getSyncLogLine(int i);
+int  getSyncTotalFiles();
+bool isPcConnected();
 
 // For input handler
 void syncHandleKey(uint8_t keyCode, uint8_t modifiers);

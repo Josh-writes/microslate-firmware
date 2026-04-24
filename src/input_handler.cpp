@@ -49,6 +49,7 @@ extern int mainMenuSelection;
 extern int selectedFileIndex;
 extern int settingsSelection;
 extern int bluetoothDeviceSelection;
+extern int pairedKeyboardSelection;
 extern Orientation currentOrientation;
 extern int charsPerLine;
 extern bool screenDirty;
@@ -293,6 +294,7 @@ static void dispatchEvent(const KeyEvent& event) {
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_ENTER) {
         if (mainMenuSelection == 0) {
+          refreshFileList();
           currentState = UIState::FILE_BROWSER;
           screenDirty = true;
         } else if (mainMenuSelection == 1) {
@@ -365,7 +367,7 @@ static void dispatchEvent(const KeyEvent& event) {
       break;
 
     case UIState::SETTINGS: {
-      const int SETTINGS_COUNT = 5;  // Orientation, Dark Mode, Writing Mode, Bluetooth, Clear Paired
+      const int SETTINGS_COUNT = 5;  // Orientation, Dark Mode, Writing Mode, Bluetooth, Paired Keyboards
 
       // Up/Down: navigate settings list (physical buttons also map here)
       if (event.keyCode == HID_KEY_DOWN) {
@@ -388,7 +390,8 @@ static void dispatchEvent(const KeyEvent& event) {
         } else if (settingsSelection == 3) {
           currentState = UIState::BLUETOOTH_SETTINGS;
         } else if (settingsSelection == 4) {
-          clearAllBluetoothBonds();
+          pairedKeyboardSelection = 0;
+          currentState = UIState::PAIRED_KEYBOARDS;
         }
         screenDirty = true;
 
@@ -457,6 +460,50 @@ static void dispatchEvent(const KeyEvent& event) {
         if (isKeyboardConnected()) {
           disconnectCurrentDevice();
           screenDirty = true;
+        }
+      }
+      break;
+    }
+
+    case UIState::PAIRED_KEYBOARDS: {
+      int count = getPairedKeyboardCount();
+
+      if (event.keyCode == HID_KEY_ESCAPE) {
+        currentState = UIState::SETTINGS;
+        screenDirty = true;
+      } else if (event.keyCode == HID_KEY_DOWN) {
+        if (count > 0) {
+          pairedKeyboardSelection = (pairedKeyboardSelection + 1) % count;
+          screenDirty = true;
+        }
+      } else if (event.keyCode == HID_KEY_UP) {
+        if (count > 0) {
+          pairedKeyboardSelection = (pairedKeyboardSelection - 1 + count) % count;
+          screenDirty = true;
+        }
+      } else if (event.keyCode == HID_KEY_ENTER) {
+        if (count > 0) {
+          connectToPairedKeyboard(pairedKeyboardSelection);
+          currentState = UIState::SETTINGS;
+          screenDirty = true;
+        }
+      } else if (event.keyCode == HID_KEY_D) {
+        if (count > 0) {
+          removePairedKeyboard(pairedKeyboardSelection);
+          int newCount = getPairedKeyboardCount();
+          if (pairedKeyboardSelection >= newCount && newCount > 0)
+            pairedKeyboardSelection = newCount - 1;
+          screenDirty = true;
+        }
+      } else if (event.keyCode == HID_KEY_LEFT) {
+        // Disconnect if this keyboard is the currently connected one
+        if (count > 0 && isKeyboardConnected()) {
+          std::string addr, name; uint8_t addrType;
+          getPairedKeyboard(pairedKeyboardSelection, addr, name, addrType);
+          if (getCurrentDeviceAddress() == addr) {
+            disconnectCurrentDevice();
+            screenDirty = true;
+          }
         }
       }
       break;

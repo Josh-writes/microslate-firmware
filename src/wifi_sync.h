@@ -36,6 +36,7 @@ const char* getSyncStatusText();
 // Sync activity log (for SYNCING/DONE screens)
 int  getSyncFilesSent();
 int  getSyncFilesReceived();
+int  getSyncTotalFiles();
 int  getSyncLogCount();
 const char* getSyncLogLine(int i);
 

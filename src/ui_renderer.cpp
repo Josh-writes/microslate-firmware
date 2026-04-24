@@ -870,8 +870,8 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       constexpr int bm = 28;
       clippedLine(renderer, 10, sh - bm - 2, sw - 10, sh - bm - 2, tc);
       char countStr[48];
-      snprintf(countStr, sizeof(countStr), "Sent: %d  Recv: %d   Esc: Cancel",
-               getSyncFilesSent(), getSyncFilesReceived());
+      snprintf(countStr, sizeof(countStr), "Sent: %d / %d   Recv: %d   Esc: Cancel",
+               getSyncFilesSent(), getSyncTotalFiles(), getSyncFilesReceived());
       drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 4, countStr, sw - 20, tc);
       break;
     }

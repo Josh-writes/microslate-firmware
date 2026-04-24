@@ -52,7 +52,8 @@ static bool autoConnectAttempted = false;  // True if we tried auto-connect with
 
 // --- Sync activity tracking ---
 static int filesSent = 0;       // Files downloaded by PC (GET)
-static int filesReceived = 0;   // Files uploaded by PC (POST)
+static int filesReceived = 0;  // Files uploaded by PC (POST)
+static int totalFilesToSync = 0; // Total .txt files on device
 
 static constexpr int MAX_LOG_LINES = 6;
 static char syncLog[MAX_LOG_LINES][48];
@@ -70,6 +71,7 @@ static constexpr unsigned long DONE_DISPLAY_MS = 3000;  // 3s before returning t
 static void startHttpServer();
 static void stopHttpServer();
 static void beginScan();
+static void beginConnect(const char* ssid, const char* pass);
 static void enterSyncingState();
 static void enterDoneState();
 static void addSyncLogEntry(const char* fmt, const char* filename);
@@ -81,10 +83,13 @@ static void addSyncLogEntry(const char* fmt, const char* filename);
 static void resetSyncTracking() {
   filesSent = 0;
   filesReceived = 0;
+  totalFilesToSync = getFileCount();
   syncLogCount = 0;
   syncCompletePending = false;
   for (int i = 0; i < MAX_LOG_LINES; i++) syncLog[i][0] = '\0';
 }
+
+int getSyncTotalFiles() { return totalFilesToSync; }
 
 static void addSyncLogEntry(const char* fmt, const char* filename) {
   // Shift entries up if full
@@ -296,6 +301,18 @@ static void processScanResults() {
   statusText[0] = '\0';
   screenDirty = true;
   DBG_PRINTF("[SYNC] Found %d networks\n", networkCount);
+
+  // Intelligent auto-connect: if the strongest available network is saved, auto-connect
+  if (networkCount > 0 && networks[0].saved) {
+    char savedPass[MAX_PASSWORD_LEN + 1];
+    if (getSavedPassword(networks[0].ssid, savedPass, sizeof(savedPass))) {
+      usedSavedPassword = true;
+      autoConnectAttempted = true;
+      beginConnect(networks[0].ssid, savedPass);
+      DBG_PRINTF("[SYNC] Auto-connecting to strongest saved network: %s\n", networks[0].ssid);
+      return;
+    }
+  }
 }
 
 // =========================================================================
@@ -633,17 +650,7 @@ void wifiSyncStart() {
   wifiPrefs.begin("wifi_creds", false);
   resetSyncTracking();
 
-  // Auto-connect shortcut: if saved credentials exist, skip scanning
-  char savedSSID[33], savedPass[MAX_PASSWORD_LEN + 1];
-  if (getFirstSavedCredential(savedSSID, sizeof(savedSSID), savedPass, sizeof(savedPass))) {
-    usedSavedPassword = true;
-    autoConnectAttempted = true;
-    beginConnect(savedSSID, savedPass);
-    DBG_PRINTF("[SYNC] Auto-connecting to saved network: %s\n", savedSSID);
-  } else {
-    autoConnectAttempted = false;
-    beginScan();
-  }
+  beginScan();
 
   DBG_PRINTLN("[SYNC] WiFi sync started");
 }

@@ -43,3 +43,4 @@ const char* editorGetCurrentFile();
 const char* editorGetCurrentTitle();
 bool editorHasUnsavedChanges();
 void editorSetUnsavedChanges(bool v);
+int editorGetWordCount();

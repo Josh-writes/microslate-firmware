@@ -17,6 +17,7 @@ extern bool darkMode;
 extern bool cleanMode;
 extern bool deleteConfirmPending;
 extern WritingMode writingMode;
+extern FontSize fontSize;
 
 // External functions
 uint32_t getCurrentPasskey();
@@ -266,7 +267,7 @@ static void drawEditorLine(GfxRenderer& renderer, int lineIdx, int x, int yPos,
     int copyLen = (len < (int)sizeof(lineBuf) - 1) ? len : (int)sizeof(lineBuf) - 1;
     strncpy(lineBuf, buf + lineStart, copyLen);
     lineBuf[copyLen] = '\0';
-    drawClippedText(renderer, FONT_BODY, x, yPos, lineBuf, maxW, tc);
+    drawClippedText(renderer, editorFontId(fontSize), x, yPos, lineBuf, maxW, tc);
   }
 }
 
@@ -283,8 +284,8 @@ static void drawEditorCursor(GfxRenderer& renderer, int cursorY, int lineHeight,
   strncpy(prefix, buf + lineStart, prefixLen);
   prefix[prefixLen] = '\0';
 
-  int cursorX = 10 + renderer.getTextAdvanceX(FONT_BODY, prefix);
-  int cursorW = renderer.getSpaceWidth(FONT_BODY);
+  int cursorX = 10 + renderer.getTextAdvanceX(editorFontId(fontSize), prefix);
+  int cursorW = renderer.getSpaceWidth(editorFontId(fontSize));
   if (cursorW < 2) cursorW = 8;
 
   if (cursorX >= 0 && cursorX + cursorW <= sw && cursorY >= 0 && cursorY + lineHeight <= renderer.getScreenHeight()) {
@@ -315,18 +316,20 @@ static int drawEditorHeader(GfxRenderer& renderer, HalGPIO& gpio, int sw, bool t
     strncpy(headerBuf, title, sizeof(headerBuf) - 1);
     headerBuf[sizeof(headerBuf) - 1] = '\0';
   }
-  drawClippedText(renderer, FONT_SMALL, 10, 5, headerBuf, sw - 100, tc, EpdFontFamily::BOLD);
+  // Mode + word count indicator, right-anchored before battery
+  char statusBuf[24];
+  snprintf(statusBuf, sizeof(statusBuf), "%s %dw", getModeIndicator(), editorGetWordCount());
+  int statusW = renderer.getTextAdvanceX(FONT_SMALL, statusBuf);
+  drawClippedText(renderer, FONT_SMALL, sw - 70 - statusW, 5, statusBuf, statusW + 5, tc);
+
+  // Title — stop before status text
+  drawClippedText(renderer, FONT_SMALL, 10, 5, headerBuf, sw - 80 - statusW, tc, EpdFontFamily::BOLD);
 
   // Centered text (e.g. page indicator)
   if (centerText) {
     int ctW = renderer.getTextAdvanceX(FONT_SMALL, centerText);
     drawClippedText(renderer, FONT_SMALL, (sw - ctW) / 2, 5, centerText, ctW + 5, tc);
   }
-
-  // Mode indicator (always shown, left of battery with gap)
-  const char* modeInd = getModeIndicator();
-  int indW = renderer.getTextAdvanceX(FONT_SMALL, modeInd);
-  drawClippedText(renderer, FONT_SMALL, sw - 70 - indW, 5, modeInd, indW + 5, tc);
 
   drawBattery(renderer, gpio);
   clippedLine(renderer, 5, 32, sw - 5, 32, tc);
@@ -341,7 +344,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
 
   if (darkMode) clippedFillRect(renderer, 0, 0, sw, sh, true);
 
-  int lineHeight = renderer.getLineHeight(FONT_BODY);
+  int lineHeight = renderer.getLineHeight(editorFontId(fontSize));
   if (lineHeight <= 0) lineHeight = 20;
   int totalLines = editorGetLineCount();
   int curLine = editorGetCursorLine();
@@ -480,11 +483,11 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   drawBattery(renderer, gpio);
   clippedLine(renderer, 5, 32, sw - 5, 32, !darkMode);
 
-  // Setting items: Orientation, Dark Mode, Writing Mode, Bluetooth, Paired Keyboards
+  // Setting items: Orientation, Dark Mode, Writing Mode, Font Size, Bluetooth, Paired Keyboards
   static const char* labels[] = {
-    "Orientation", "Dark Mode", "Writing Mode", "Bluetooth", "Paired Keyboards"
+    "Orientation", "Dark Mode", "Writing Mode", "Font Size", "Bluetooth", "Paired Keyboards"
   };
-  const int SETTINGS_COUNT = 5;
+  const int SETTINGS_COUNT = 6;
 
   // Compute line height to fit all items — use smaller spacing if needed
   int lineH = 38;
@@ -522,7 +525,13 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
         case WritingMode::TYPEWRITER: strcpy(val, "Typewriter"); break;
         case WritingMode::PAGINATION: strcpy(val, "Pagination"); break;
       }
-    } else if (i == 4) {
+    } else if (i == 3) {
+      switch (fontSize) {
+        case FontSize::SMALL:  strcpy(val, "Small"); break;
+        case FontSize::MEDIUM: strcpy(val, "Medium"); break;
+        default:               strcpy(val, "Large"); break;
+      }
+    } else if (i == 5) {
       int kbCount = getPairedKeyboardCount();
       if (kbCount == 0) strcpy(val, "None");
       else if (kbCount == 1) strcpy(val, "1 keyboard");
@@ -671,8 +680,8 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
   constexpr int bm = 60;
   if (sh > bm + 30) {
     clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm, tc);
-    drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 12,
-                    "Enter:Connect  Right:Scan  Left:Disconnect  Esc:Back", 0, tc);
+    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 8,  "Enter:Connect  Right:Scan", 0, tc);
+    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 22, "Left:Disconnect  Esc:Back", 0, tc);
   }
 
   renderer.beginRefresh(HalDisplay::FAST_REFRESH);

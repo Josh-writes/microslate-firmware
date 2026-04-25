@@ -137,6 +137,20 @@ char* editorGetBuffer() { return textBuffer; }
 size_t editorGetLength() { return textLength; }
 int editorGetCursorPosition() { return cursorPosition; }
 
+int editorGetWordCount() {
+  int count = 0;
+  bool inWord = false;
+  for (size_t i = 0; i < textLength; i++) {
+    char c = textBuffer[i];
+    if (c == ' ' || c == '\n' || c == '\t' || c == '\r') {
+      inWord = false;
+    } else {
+      if (!inWord) { count++; inWord = true; }
+    }
+  }
+  return count;
+}
+
 void editorInsertChar(char c) {
   if (textLength >= TEXT_BUFFER_SIZE - 1) return;
 

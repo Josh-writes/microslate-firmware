@@ -83,6 +83,17 @@ static constexpr int MAX_LINES = 1024;
 #define FONT_UI      (-1559651934)   // NOTOSANS_12_FONT_ID
 #define FONT_SMALL   (-1246724383)   // UI_10_FONT_ID (ubuntu 10)
 
+// --- Font Size ---
+enum class FontSize : uint8_t { SMALL = 0, MEDIUM = 1, LARGE = 2 };
+
+inline int editorFontId(FontSize size) {
+  switch (size) {
+    case FontSize::SMALL:  return FONT_SMALL;
+    case FontSize::MEDIUM: return FONT_UI;
+    default:               return FONT_BODY;
+  }
+}
+
 // --- HID Keycodes ---
 static constexpr uint8_t HID_KEY_A          = 0x04;
 static constexpr uint8_t HID_KEY_B          = 0x05;

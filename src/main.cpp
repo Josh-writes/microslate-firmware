@@ -58,6 +58,7 @@ bool darkMode = false;
 bool cleanMode = false;
 bool deleteConfirmPending = false;
 WritingMode writingMode = WritingMode::NORMAL;
+FontSize fontSize = FontSize::LARGE;
 
 // --- OTA App Detection ---
 OtaAppEntry otaApps[MAX_OTA_APPS];
@@ -156,7 +157,7 @@ static void updateScreen() {
   {
     int sw = renderer.getScreenWidth();
     int textAreaWidth = sw - 20;  // 10px margins each side
-    int avgCharW = renderer.getTextAdvanceX(FONT_BODY, "abcdefghijklmnopqrstuvwxyz") / 26;
+    int avgCharW = renderer.getTextAdvanceX(editorFontId(fontSize), "abcdefghijklmnopqrstuvwxyz") / 26;
     if (avgCharW > 0) charsPerLine = textAreaWidth / avgCharW;
   }
   editorSetCharsPerLine(charsPerLine);
@@ -191,6 +192,7 @@ void setup() {
   currentOrientation = static_cast<Orientation>(uiPrefs.getUChar("orient", 0));
   darkMode = uiPrefs.getBool("darkMode", false);
   writingMode = static_cast<WritingMode>(uiPrefs.getUChar("writeMode", 0));
+  fontSize = static_cast<FontSize>(uiPrefs.getUChar("fontSize", 2));
 
   // Apply saved orientation
   {
@@ -435,6 +437,32 @@ static void processPhysicalButtons() {
       break;
 
     case UIState::BLUETOOTH_SETTINGS:
+      if (btnUp && !btnUpLast) {
+        enqueueKeyEvent(HID_KEY_UP, 0, true);
+        enqueueKeyEvent(HID_KEY_UP, 0, false);
+      }
+      if (btnDown && !btnDownLast) {
+        enqueueKeyEvent(HID_KEY_DOWN, 0, true);
+        enqueueKeyEvent(HID_KEY_DOWN, 0, false);
+      }
+      if (btnRight && !btnRightLast) {
+        enqueueKeyEvent(HID_KEY_RIGHT, 0, true);  // Scan
+        enqueueKeyEvent(HID_KEY_RIGHT, 0, false);
+      }
+      if (btnLeft && !btnLeftLast) {
+        enqueueKeyEvent(HID_KEY_LEFT, 0, true);   // Disconnect
+        enqueueKeyEvent(HID_KEY_LEFT, 0, false);
+      }
+      if (btnConfirm && !btnConfirmLast) {
+        enqueueKeyEvent(HID_KEY_ENTER, 0, true);
+        enqueueKeyEvent(HID_KEY_ENTER, 0, false);
+      }
+      if (btnBack && !btnBackLast) {
+        enqueueKeyEvent(HID_KEY_ESCAPE, 0, true);
+        enqueueKeyEvent(HID_KEY_ESCAPE, 0, false);
+      }
+      break;
+
     case UIState::PAIRED_KEYBOARDS:
       if ((btnUp && !btnUpLast) || (btnRight && !btnRightLast)) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
@@ -627,14 +655,17 @@ void loop() {
   static Orientation lastSavedOrientation = currentOrientation;
   static bool lastSavedDarkMode = darkMode;
   static WritingMode lastSavedWritingMode = writingMode;
+  static FontSize lastSavedFontSize = fontSize;
   if (currentOrientation != lastSavedOrientation || darkMode != lastSavedDarkMode
-      || writingMode != lastSavedWritingMode) {
+      || writingMode != lastSavedWritingMode || fontSize != lastSavedFontSize) {
     uiPrefs.putUChar("orient", static_cast<uint8_t>(currentOrientation));
     uiPrefs.putBool("darkMode", darkMode);
     uiPrefs.putUChar("writeMode", static_cast<uint8_t>(writingMode));
+    uiPrefs.putUChar("fontSize", static_cast<uint8_t>(fontSize));
     lastSavedOrientation = currentOrientation;
     lastSavedDarkMode = darkMode;
     lastSavedWritingMode = writingMode;
+    lastSavedFontSize = fontSize;
   }
 
   // Check for idle timeout (skip while WiFi sync is active)

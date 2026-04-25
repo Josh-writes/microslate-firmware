@@ -82,15 +82,16 @@ static constexpr int MAX_LINES = 1024;
 #define FONT_BODY    (-1014561631)   // NOTOSANS_14_FONT_ID
 #define FONT_UI      (-1559651934)   // NOTOSANS_12_FONT_ID
 #define FONT_SMALL   (-1246724383)   // UI_10_FONT_ID (ubuntu 10)
+#define FONT_LARGE   (-1422711852)   // NOTOSANS_16_FONT_ID
 
 // --- Font Size ---
 enum class FontSize : uint8_t { SMALL = 0, MEDIUM = 1, LARGE = 2 };
 
 inline int editorFontId(FontSize size) {
   switch (size) {
-    case FontSize::SMALL:  return FONT_SMALL;
-    case FontSize::MEDIUM: return FONT_UI;
-    default:               return FONT_BODY;
+    case FontSize::SMALL:  return FONT_UI;    // notosans 12
+    case FontSize::MEDIUM: return FONT_BODY;  // notosans 14
+    default:               return FONT_LARGE; // notosans 16
   }
 }
 

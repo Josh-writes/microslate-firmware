@@ -26,6 +26,8 @@ bool isDeviceScanning();
 uint32_t getScanAgeMs();
 
 // Font data includes
+#include <builtinFonts/notosans_16_regular.h>
+#include <builtinFonts/notosans_16_bold.h>
 #include <builtinFonts/notosans_14_regular.h>
 #include <builtinFonts/notosans_14_bold.h>
 #include <builtinFonts/notosans_12_regular.h>
@@ -34,6 +36,10 @@ uint32_t getScanAgeMs();
 #include <builtinFonts/ubuntu_10_bold.h>
 
 // Font objects (file-scoped)
+static EpdFont ns16Regular(&notosans_16_regular);
+static EpdFont ns16Bold(&notosans_16_bold);
+static EpdFontFamily ns16Family(&ns16Regular, &ns16Bold);
+
 static EpdFont ns14Regular(&notosans_14_regular);
 static EpdFont ns14Bold(&notosans_14_bold);
 static EpdFontFamily ns14Family(&ns14Regular, &ns14Bold);
@@ -63,6 +69,7 @@ extern char renameBuffer[];
 extern int renameBufferLen;
 
 void rendererSetup(GfxRenderer& renderer) {
+  renderer.insertFont(FONT_LARGE, ns16Family);
   renderer.insertFont(FONT_BODY, ns14Family);
   renderer.insertFont(FONT_UI, ns12Family);
   renderer.insertFont(FONT_SMALL, u10Family);
@@ -317,18 +324,29 @@ static int drawEditorHeader(GfxRenderer& renderer, HalGPIO& gpio, int sw, bool t
     strncpy(headerBuf, title, sizeof(headerBuf) - 1);
     headerBuf[sizeof(headerBuf) - 1] = '\0';
   }
-  // Mode + optional word count, right-anchored before battery
-  char statusBuf[24];
-  if (showWordCount) {
-    snprintf(statusBuf, sizeof(statusBuf), "%s %dw", getModeIndicator(), editorGetWordCount());
-  } else {
-    snprintf(statusBuf, sizeof(statusBuf), "%s", getModeIndicator());
-  }
-  int statusW = renderer.getTextAdvanceX(FONT_SMALL, statusBuf);
-  drawClippedText(renderer, FONT_SMALL, sw - 70 - statusW, 5, statusBuf, statusW + 5, tc);
+  // Mode indicator — fixed position, right-anchored before battery
+  const char* modeInd = getModeIndicator();
+  int modeW = renderer.getTextAdvanceX(FONT_SMALL, modeInd);
+  int modeX = sw - 70 - modeW;
+  drawClippedText(renderer, FONT_SMALL, modeX, 5, modeInd, modeW + 5, tc);
 
-  // Title — stop before status text
-  drawClippedText(renderer, FONT_SMALL, 10, 5, headerBuf, sw - 80 - statusW, tc, EpdFontFamily::BOLD);
+  // Word count — drawn to the left of the mode indicator
+  int titleMaxW = modeX - 10;
+  if (showWordCount) {
+    int wc = editorGetWordCount();
+    char wcBuf[24];
+    if (wc == 1) snprintf(wcBuf, sizeof(wcBuf), "1 word");
+    else         snprintf(wcBuf, sizeof(wcBuf), "%d words", wc);
+    int wcW = renderer.getTextAdvanceX(FONT_SMALL, wcBuf);
+    int wcX = modeX - 8 - wcW;
+    if (wcX > 10) {
+      drawClippedText(renderer, FONT_SMALL, wcX, 5, wcBuf, wcW + 5, tc);
+      titleMaxW = wcX - 10;
+    }
+  }
+
+  // Title — stops before word count (or mode indicator if word count hidden)
+  drawClippedText(renderer, FONT_SMALL, 10, 5, headerBuf, titleMaxW, tc, EpdFontFamily::BOLD);
 
   // Centered text (e.g. page indicator)
   if (centerText) {

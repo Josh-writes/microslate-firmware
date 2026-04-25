@@ -163,6 +163,8 @@ static class ScanCallbacks : public NimBLEScanCallbacks {
     info.addressType = dev->getAddress().getType();
     info.lastSeenMs = millis();
     upsertDevice(info);
+    extern bool screenDirty;
+    screenDirty = true;
   }
 } scanCallbacks;
 
@@ -430,6 +432,26 @@ static void bleConnectTask(void* param) {
   // after connecting triggers a reentrancy crash with Keychron keyboards (the keyboard
   // sends its own BLE_GAP_EVENT_CONN_UPDATE_REQ at the same time).  The adaptive params
   // logic in bleLoop() handles this safely from the main task after a stable delay.
+
+  // If the device didn't broadcast a name during scanning, read it from GATT now.
+  // Generic Access service (0x1800) Device Name characteristic (0x2A00).
+  {
+    NimBLERemoteService* gasSvc = pClient->getService(NimBLEUUID((uint16_t)0x1800));
+    if (gasSvc) {
+      NimBLERemoteCharacteristic* nameChr = gasSvc->getCharacteristic(NimBLEUUID((uint16_t)0x2A00));
+      if (nameChr) {
+        std::string gattName = nameChr->readValue();
+        if (!gattName.empty()) {
+          for (auto& d : discoveredDevices) {
+            if (d.address == keyboardAddress && d.name == keyboardAddress) {
+              d.name = gattName;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
 
   // Store device to NVS for future reconnects, then reset cycling index to this keyboard
   {

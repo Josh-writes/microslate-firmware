@@ -33,21 +33,41 @@ jobs:
       - name: Build firmware
         run: pio run
 
-      - name: Merge binary
+      - name: Merge binaries
         run: |
           pip install esptool
+          BOOT_APP0=$(find ~/.platformio -name "boot_app0.bin" | head -1)
+
           esptool.py --chip esp32c3 merge_bin \
             --flash_mode dio --flash_size 16MB \
             -o microslate-${{ github.ref_name }}.bin \
-            0x0    .pio/build/xteink_x4/bootloader.bin \
-            0x8000 .pio/build/xteink_x4/partitions.bin \
-            0xe000 ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+            0x0     .pio/build/xteink_x4/bootloader.bin \
+            0x8000  .pio/build/xteink_x4/partitions.bin \
+            0xe000  "$BOOT_APP0" \
             0x10000 .pio/build/xteink_x4/firmware.bin
+
+          if curl -f -o crosspoint-app.bin https://typeslate.com/tools/crosspoint/firmware/app.bin; then
+            esptool.py --chip esp32c3 merge_bin \
+              --flash_mode dio --flash_size 16MB \
+              -o dualboot-${{ github.ref_name }}.bin \
+              0x0      .pio/build/xteink_x4/bootloader.bin \
+              0x8000   .pio/build/xteink_x4/partitions.bin \
+              0xe000   "$BOOT_APP0" \
+              0x10000  .pio/build/xteink_x4/firmware.bin \
+              0x500000 crosspoint-app.bin
+            echo "DUALBOOT_BUILT=true" >> $GITHUB_ENV
+          else
+            echo "CrossPoint app.bin not on website yet, skipping dual-boot build"
+            echo "DUALBOOT_BUILT=false" >> $GITHUB_ENV
+          fi
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: microslate-${{ github.ref_name }}.bin
+          files: |
+            microslate-${{ github.ref_name }}.bin
+            dualboot-${{ github.ref_name }}.bin
+          fail_on_unmatched_files: false
           generate_release_notes: true
 
       - name: Update firmware on typeslate website
@@ -57,6 +77,13 @@ jobs:
           git clone https://x-access-token:${WEBSITE_PAT}@github.com/josh-websites/typeslate-website.git website
           cp microslate-${{ github.ref_name }}.bin website/tools/microslate/firmware/latest.bin
           echo '{"version":"${{ github.ref_name }}"}' > website/tools/microslate/firmware/version.json
+
+          if [ "$DUALBOOT_BUILT" = "true" ]; then
+            cp dualboot-${{ github.ref_name }}.bin website/tools/microslate/firmware/dualboot-latest.bin
+            echo '{"version":"${{ github.ref_name }}"}' > website/tools/microslate/firmware/dualboot-version.json
+            git -C website add tools/microslate/firmware/dualboot-latest.bin tools/microslate/firmware/dualboot-version.json
+          fi
+
           cd website
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

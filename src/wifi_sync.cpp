@@ -1,6 +1,7 @@
 #include "wifi_sync.h"
 #include "config.h"
 #include "file_manager.h"
+#include "sd_backup.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -108,6 +109,56 @@ static void addSyncLogEntry(const char* fmt, const char* filename) {
 }
 
 // =========================================================================
+// SD card backup for WiFi credentials
+// =========================================================================
+
+static constexpr char WIFI_BACKUP_PATH[] = "/microslate/wifi.json";
+
+static void writeWifiBackup() {
+    static char buf[512];
+    int count = wifiPrefs.getInt("wifi_count", 0);
+    snprintf(buf, sizeof(buf), "{\"count\":%d", count);
+    for (int i = 0; i < count && i < MAX_SAVED_NETWORKS; i++) {
+        char sKey[16], pKey[16];
+        snprintf(sKey, sizeof(sKey), "wifi_ssid_%d", i);
+        snprintf(pKey, sizeof(pKey), "wifi_pass_%d", i);
+        String ssid = wifiPrefs.getString(sKey, "");
+        String pass = wifiPrefs.getString(pKey, "");
+        char tmp[16];
+        snprintf(tmp, sizeof(tmp), ",\"s%d\":\"", i);  strncat(buf, tmp, sizeof(buf) - strlen(buf) - 1);
+        jsonAppendStr(buf, sizeof(buf), ssid.c_str());  strncat(buf, "\"", sizeof(buf) - strlen(buf) - 1);
+        snprintf(tmp, sizeof(tmp), ",\"p%d\":\"", i);  strncat(buf, tmp, sizeof(buf) - strlen(buf) - 1);
+        jsonAppendStr(buf, sizeof(buf), pass.c_str());  strncat(buf, "\"", sizeof(buf) - strlen(buf) - 1);
+    }
+    strncat(buf, "}", sizeof(buf) - strlen(buf) - 1);
+    if (!SdMan.exists("/microslate")) SdMan.mkdir("/microslate");
+    sdWriteFile(WIFI_BACKUP_PATH, buf);
+}
+
+static void restoreWifiBackup() {
+    static char buf[512];
+    if (!sdReadFile(WIFI_BACKUP_PATH, buf, sizeof(buf))) return;
+    int count = jsonGetInt(buf, "count");
+    if (count <= 0) return;
+    for (int i = 0; i < count && i < MAX_SAVED_NETWORKS; i++) {
+        char sKey[16], pKey[16], sNvs[16], pNvs[16];
+        snprintf(sKey, sizeof(sKey), "s%d", i);
+        snprintf(pKey, sizeof(pKey), "p%d", i);
+        snprintf(sNvs, sizeof(sNvs), "wifi_ssid_%d", i);
+        snprintf(pNvs, sizeof(pNvs), "wifi_pass_%d", i);
+        char ssid[64] = "", pass[128] = "";
+        jsonGetStr(buf, sKey, ssid, sizeof(ssid));
+        jsonGetStr(buf, pKey, pass, sizeof(pass));
+        if (ssid[0]) {
+            wifiPrefs.putString(sNvs, ssid);
+            wifiPrefs.putString(pNvs, pass);
+        }
+    }
+    wifiPrefs.putInt("wifi_count", count);
+    DBG_PRINTF("[SYNC] Restored %d WiFi credential(s) from SD backup\n", count);
+}
+
+// =========================================================================
 // NVS credential storage
 // =========================================================================
 
@@ -170,6 +221,7 @@ static void saveCredential(const char* ssid, const char* pass) {
   if (count < MAX_SAVED_NETWORKS) {
     wifiPrefs.putInt("wifi_count", count + 1);
   }
+  writeWifiBackup();
 }
 
 static void forgetCredential(const char* ssid) {
@@ -197,6 +249,7 @@ static void forgetCredential(const char* ssid) {
       wifiPrefs.remove(lastS);
       wifiPrefs.remove(lastP);
       wifiPrefs.putInt("wifi_count", count - 1);
+      writeWifiBackup();
       return;
     }
   }
@@ -637,6 +690,7 @@ void wifiSyncStart() {
   if (syncActive) return;
   syncActive = true;
   wifiPrefs.begin("wifi_creds", false);
+  if (!wifiPrefs.isKey("wifi_count")) restoreWifiBackup();
   resetSyncTracking();
 
   beginScan();

@@ -1,5 +1,6 @@
 #include "ble_keyboard.h"
 #include "input_handler.h"
+#include "sd_backup.h"
 
 #include <NimBLEDevice.h>
 #include <Preferences.h>
@@ -520,6 +521,54 @@ static void nvs_clearSlot(int idx) {
   nvs_kbKey(key, idx, "type"); prefs.remove(key);
 }
 
+// --- SD card backup for BLE pairing ---
+
+static constexpr char BLE_BACKUP_PATH[] = "/microslate/ble_kb.json";
+
+static void writeBleBackup() {
+    static char buf[512];
+    int count = nvs_loadCount();
+    int last  = (int)prefs.getUChar("last_kb", 0);
+    snprintf(buf, sizeof(buf), "{\"count\":%d,\"last\":%d", count, last);
+    for (int i = 0; i < count; i++) {
+        std::string addr = nvs_loadAddr(i);
+        std::string name = nvs_loadName(i);
+        uint8_t     type = nvs_loadType(i);
+        char tmp[16];
+        snprintf(tmp, sizeof(tmp), ",\"a%d\":\"", i);  strncat(buf, tmp, sizeof(buf) - strlen(buf) - 1);
+        jsonAppendStr(buf, sizeof(buf), addr.c_str());  strncat(buf, "\"", sizeof(buf) - strlen(buf) - 1);
+        snprintf(tmp, sizeof(tmp), ",\"n%d\":\"", i);  strncat(buf, tmp, sizeof(buf) - strlen(buf) - 1);
+        jsonAppendStr(buf, sizeof(buf), name.c_str());  strncat(buf, "\"", sizeof(buf) - strlen(buf) - 1);
+        snprintf(tmp, sizeof(tmp), ",\"t%d\":%d", i, type);
+        strncat(buf, tmp, sizeof(buf) - strlen(buf) - 1);
+    }
+    strncat(buf, "}", sizeof(buf) - strlen(buf) - 1);
+    if (!SdMan.exists("/microslate")) SdMan.mkdir("/microslate");
+    sdWriteFile(BLE_BACKUP_PATH, buf);
+}
+
+static void restoreBleBackup() {
+    static char buf[512];
+    if (!sdReadFile(BLE_BACKUP_PATH, buf, sizeof(buf))) return;
+    int count = jsonGetInt(buf, "count");
+    int last  = jsonGetInt(buf, "last");
+    if (count < 0) return;
+    for (int i = 0; i < count && i < MAX_PAIRED_KEYBOARDS; i++) {
+        char aKey[8], nKey[8], tKey[8];
+        snprintf(aKey, sizeof(aKey), "a%d", i);
+        snprintf(nKey, sizeof(nKey), "n%d", i);
+        snprintf(tKey, sizeof(tKey), "t%d", i);
+        char addr[32] = "", name[64] = "";
+        jsonGetStr(buf, aKey, addr, sizeof(addr));
+        jsonGetStr(buf, nKey, name, sizeof(name));
+        int type = jsonGetInt(buf, tKey);
+        if (addr[0]) nvs_saveKb(i, addr, name, (uint8_t)(type >= 0 ? type : 0));
+    }
+    prefs.putUChar("kb_count", (uint8_t)count);
+    if (last >= 0) prefs.putUChar("last_kb", (uint8_t)last);
+    DBG_PRINTF("[BLE] Restored %d paired keyboard(s) from SD backup\n", count);
+}
+
 // --- Public API ---
 
 uint32_t getCurrentPasskey() {
@@ -545,6 +594,9 @@ void bleSetup() {
   NimBLEDevice::setPower(-9);  // -9dBm — lowest verified working power level
 
   prefs.begin("ble_kb", false);
+
+  // Restore from SD backup if NVS was wiped (e.g. after a firmware flash)
+  if (!prefs.isKey("kb_count")) restoreBleBackup();
 
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setScanCallbacks(&scanCallbacks, true);
@@ -778,6 +830,7 @@ bool removePairedKeyboard(int index) {
 
   reconnectKeyboardIndex = 0;
   DBG_PRINTF("[BLE] Removed paired keyboard slot %d (%s)\n", index, addr.c_str());
+  writeBleBackup();
   return true;
 }
 
@@ -795,6 +848,7 @@ void connectToPairedKeyboard(int index) {
   reconnectDelay = 5000;
   connectToKeyboard = true;
   DBG_PRINTF("[BLE] Switching to paired keyboard %d: %s\n", index, keyboardAddress.c_str());
+  writeBleBackup();
 }
 
 void storePairedDevice(const std::string& address, const std::string& name) {
@@ -826,6 +880,7 @@ void storePairedDevice(const std::string& address, const std::string& name) {
   prefs.putUChar("last_kb", (uint8_t)idx);
   DBG_PRINTF("[BLE] Stored new paired keyboard slot %d: %s (%s)\n",
              idx, name.c_str(), address.c_str());
+  writeBleBackup();
 }
 
 bool getStoredDevice(std::string& address, std::string& name) {
@@ -865,4 +920,5 @@ void clearStoredDevice() {
   keyboardAddress = "";
   reconnectKeyboardIndex = 0;
   DBG_PRINTLN("[BLE] Cleared all paired keyboards and bonds");
+  writeBleBackup();
 }

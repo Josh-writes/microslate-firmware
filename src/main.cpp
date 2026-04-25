@@ -6,6 +6,7 @@
 #include <esp_ota_ops.h>
 #include <esp_app_format.h>
 #include <Preferences.h>
+#include "sd_backup.h"
 
 #include "config.h"
 #include "ble_keyboard.h"
@@ -211,6 +212,34 @@ void setup() {
   editorInit();
   inputSetup();
   fileManagerSetup();
+
+  // Restore UI prefs from SD backup if NVS was wiped by a firmware flash
+  if (!uiPrefs.isKey("orient")) {
+    static char uiBuf[128];
+    if (sdReadFile("/microslate/ui_prefs.json", uiBuf, sizeof(uiBuf))) {
+      int o  = jsonGetInt(uiBuf, "orient");
+      int d  = jsonGetInt(uiBuf, "dark");
+      int wm = jsonGetInt(uiBuf, "writeMode");
+      int fs = jsonGetInt(uiBuf, "fontSize");
+      int wc = jsonGetInt(uiBuf, "showWC");
+      if (o  >= 0) { uiPrefs.putUChar("orient",    (uint8_t)o);  currentOrientation = static_cast<Orientation>(o); }
+      if (d  >= 0) { uiPrefs.putBool("darkMode",   d != 0);      darkMode           = (d != 0); }
+      if (wm >= 0) { uiPrefs.putUChar("writeMode", (uint8_t)wm); writingMode        = static_cast<WritingMode>(wm); }
+      if (fs >= 0) { uiPrefs.putUChar("fontSize",  (uint8_t)fs); fontSize           = static_cast<FontSize>(fs); }
+      if (wc >= 0) { uiPrefs.putBool("showWC",     wc != 0);     showWordCount      = (wc != 0); }
+      // Re-apply orientation in case it changed
+      GfxRenderer::Orientation gfxOrient = GfxRenderer::Portrait;
+      switch (currentOrientation) {
+        case Orientation::PORTRAIT:      gfxOrient = GfxRenderer::Portrait; break;
+        case Orientation::LANDSCAPE_CW:  gfxOrient = GfxRenderer::LandscapeClockwise; break;
+        case Orientation::PORTRAIT_INV:  gfxOrient = GfxRenderer::PortraitInverted; break;
+        case Orientation::LANDSCAPE_CCW: gfxOrient = GfxRenderer::LandscapeCounterClockwise; break;
+      }
+      renderer.setOrientation(gfxOrient);
+      DBG_PRINTLN("UI prefs restored from SD backup");
+    }
+  }
+
   bleSetup();
 
   // Enable automatic light sleep between loop iterations.
@@ -672,6 +701,14 @@ void loop() {
     lastSavedWritingMode = writingMode;
     lastSavedFontSize = fontSize;
     lastSavedShowWordCount = showWordCount;
+    // Keep SD backup in sync so settings survive a firmware flash
+    static char uiBuf[128];
+    snprintf(uiBuf, sizeof(uiBuf),
+             "{\"orient\":%d,\"dark\":%d,\"writeMode\":%d,\"fontSize\":%d,\"showWC\":%d}",
+             (int)currentOrientation, darkMode ? 1 : 0,
+             (int)writingMode, (int)fontSize, showWordCount ? 1 : 0);
+    if (!SdMan.exists("/microslate")) SdMan.mkdir("/microslate");
+    sdWriteFile("/microslate/ui_prefs.json", uiBuf);
   }
 
   // Check for idle timeout (skip while WiFi sync is active)

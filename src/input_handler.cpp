@@ -14,6 +14,7 @@ extern bool cleanMode;
 extern bool deleteConfirmPending;
 extern WritingMode writingMode;
 extern FontSize fontSize;
+extern bool showWordCount;
 
 // External functions
 void storePairedDevice(const std::string& address, const std::string& name);
@@ -152,6 +153,17 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
     }
     if (keyCode == HID_KEY_T) {
       writingMode = (writingMode == WritingMode::TYPEWRITER) ? WritingMode::NORMAL : WritingMode::TYPEWRITER;
+      screenDirty = true;
+      return;
+    }
+    if (keyCode == HID_KEY_F) {
+      int v = static_cast<int>(fontSize);
+      fontSize = static_cast<FontSize>((v + 1) % 3);
+      screenDirty = true;
+      return;
+    }
+    if (keyCode == HID_KEY_W) {
+      showWordCount = !showWordCount;
       screenDirty = true;
       return;
     }

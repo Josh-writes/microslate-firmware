@@ -18,6 +18,7 @@ extern bool cleanMode;
 extern bool deleteConfirmPending;
 extern WritingMode writingMode;
 extern FontSize fontSize;
+extern bool showWordCount;
 
 // External functions
 uint32_t getCurrentPasskey();
@@ -316,9 +317,13 @@ static int drawEditorHeader(GfxRenderer& renderer, HalGPIO& gpio, int sw, bool t
     strncpy(headerBuf, title, sizeof(headerBuf) - 1);
     headerBuf[sizeof(headerBuf) - 1] = '\0';
   }
-  // Mode + word count indicator, right-anchored before battery
+  // Mode + optional word count, right-anchored before battery
   char statusBuf[24];
-  snprintf(statusBuf, sizeof(statusBuf), "%s %dw", getModeIndicator(), editorGetWordCount());
+  if (showWordCount) {
+    snprintf(statusBuf, sizeof(statusBuf), "%s %dw", getModeIndicator(), editorGetWordCount());
+  } else {
+    snprintf(statusBuf, sizeof(statusBuf), "%s", getModeIndicator());
+  }
   int statusW = renderer.getTextAdvanceX(FONT_SMALL, statusBuf);
   drawClippedText(renderer, FONT_SMALL, sw - 70 - statusW, 5, statusBuf, statusW + 5, tc);
 

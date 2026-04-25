@@ -59,6 +59,7 @@ bool cleanMode = false;
 bool deleteConfirmPending = false;
 WritingMode writingMode = WritingMode::NORMAL;
 FontSize fontSize = FontSize::LARGE;
+bool showWordCount = true;
 
 // --- OTA App Detection ---
 OtaAppEntry otaApps[MAX_OTA_APPS];
@@ -193,6 +194,7 @@ void setup() {
   darkMode = uiPrefs.getBool("darkMode", false);
   writingMode = static_cast<WritingMode>(uiPrefs.getUChar("writeMode", 0));
   fontSize = static_cast<FontSize>(uiPrefs.getUChar("fontSize", 2));
+  showWordCount = uiPrefs.getBool("showWC", true);
 
   // Apply saved orientation
   {
@@ -656,16 +658,20 @@ void loop() {
   static bool lastSavedDarkMode = darkMode;
   static WritingMode lastSavedWritingMode = writingMode;
   static FontSize lastSavedFontSize = fontSize;
+  static bool lastSavedShowWordCount = showWordCount;
   if (currentOrientation != lastSavedOrientation || darkMode != lastSavedDarkMode
-      || writingMode != lastSavedWritingMode || fontSize != lastSavedFontSize) {
+      || writingMode != lastSavedWritingMode || fontSize != lastSavedFontSize
+      || showWordCount != lastSavedShowWordCount) {
     uiPrefs.putUChar("orient", static_cast<uint8_t>(currentOrientation));
     uiPrefs.putBool("darkMode", darkMode);
     uiPrefs.putUChar("writeMode", static_cast<uint8_t>(writingMode));
     uiPrefs.putUChar("fontSize", static_cast<uint8_t>(fontSize));
+    uiPrefs.putBool("showWC", showWordCount);
     lastSavedOrientation = currentOrientation;
     lastSavedDarkMode = darkMode;
     lastSavedWritingMode = writingMode;
     lastSavedFontSize = fontSize;
+    lastSavedShowWordCount = showWordCount;
   }
 
   // Check for idle timeout (skip while WiFi sync is active)

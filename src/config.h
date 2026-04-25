@@ -98,10 +98,12 @@ inline int editorFontId(FontSize size) {
 static constexpr uint8_t HID_KEY_A          = 0x04;
 static constexpr uint8_t HID_KEY_B          = 0x05;
 static constexpr uint8_t HID_KEY_D          = 0x07;
+static constexpr uint8_t HID_KEY_F          = 0x09;
 static constexpr uint8_t HID_KEY_N          = 0x11;
 static constexpr uint8_t HID_KEY_P          = 0x13;
 static constexpr uint8_t HID_KEY_Q          = 0x14;
 static constexpr uint8_t HID_KEY_R          = 0x15;
+static constexpr uint8_t HID_KEY_W          = 0x1A;
 static constexpr uint8_t HID_KEY_S          = 0x16;
 static constexpr uint8_t HID_KEY_T          = 0x17;
 static constexpr uint8_t HID_KEY_Z          = 0x1D;

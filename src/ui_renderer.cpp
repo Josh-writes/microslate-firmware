@@ -4,6 +4,7 @@
 #include "file_manager.h"
 #include "ble_keyboard.h"
 #include "wifi_sync.h"
+#include "keyboard_layout.h"
 
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
@@ -19,6 +20,7 @@ extern bool deleteConfirmPending;
 extern WritingMode writingMode;
 extern FontSize fontSize;
 extern bool showWordCount;
+extern KeyboardLayout currentKeyboardLayout;
 
 // External functions
 uint32_t getCurrentPasskey();
@@ -271,7 +273,7 @@ static void drawEditorLine(GfxRenderer& renderer, int lineIdx, int x, int yPos,
 
   int len = dispEnd - lineStart;
   if (len > 0) {
-    char lineBuf[256];
+    char lineBuf[512];
     int copyLen = (len < (int)sizeof(lineBuf) - 1) ? len : (int)sizeof(lineBuf) - 1;
     strncpy(lineBuf, buf + lineStart, copyLen);
     lineBuf[copyLen] = '\0';
@@ -283,12 +285,17 @@ static void drawEditorLine(GfxRenderer& renderer, int lineIdx, int x, int yPos,
 static void drawEditorCursor(GfxRenderer& renderer, int cursorY, int lineHeight,
                              int sw, bool tc) {
   int curLine = editorGetCursorLine();
-  int curCol = editorGetCursorCol();
+  int curPos = editorGetCursorPosition();
   char* buf = editorGetBuffer();
 
   int lineStart = editorGetLinePosition(curLine);
-  char prefix[256];
-  int prefixLen = (curCol < (int)sizeof(prefix) - 1) ? curCol : (int)sizeof(prefix) - 1;
+  char prefix[512];
+  int prefixLen = curPos - lineStart;
+  if (prefixLen < 0) prefixLen = 0;
+  if (prefixLen > (int)sizeof(prefix) - 1) prefixLen = (int)sizeof(prefix) - 1;
+  while (prefixLen > 0 && ((static_cast<unsigned char>(buf[lineStart + prefixLen]) & 0xC0) == 0x80)) {
+    prefixLen--;
+  }
   strncpy(prefix, buf + lineStart, prefixLen);
   prefix[prefixLen] = '\0';
 
@@ -447,8 +454,6 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
   editorSetVisibleLines(visibleLines);
 
   int vpStart = editorGetViewportStart();
-  char* buf = editorGetBuffer();
-  size_t bufLen = editorGetLength();
 
   // Draw visible lines
   for (int i = 0; i < visibleLines && (vpStart + i) < totalLines; i++) {
@@ -488,6 +493,9 @@ void drawRenameScreen(GfxRenderer& renderer, HalGPIO& gpio) {
   if (cursorX + 2 < sw - 15)
     renderer.fillRect(cursorX, textY, 2, 16, tc);
 
+  drawClippedText(renderer, FONT_SMALL, 20, boxY + boxH + 8,
+                  "File title input uses US QWERTY", sw - 40, tc);
+
   // Footer
   clippedLine(renderer, 5, sh - 36, sw - 5, sh - 36, tc);
   drawClippedText(renderer, FONT_SMALL, 10, sh - 30, "Enter: Confirm   Esc: Cancel", 0, tc);
@@ -506,11 +514,11 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   drawBattery(renderer, gpio);
   clippedLine(renderer, 5, 32, sw - 5, 32, !darkMode);
 
-  // Setting items: Orientation, Dark Mode, Writing Mode, Font Size, Bluetooth, Paired Keyboards
+  // Setting items: Orientation, Dark Mode, Writing Mode, Font Size, Layout, Bluetooth, Paired Keyboards
   static const char* labels[] = {
-    "Orientation", "Dark Mode", "Writing Mode", "Font Size", "Bluetooth", "Paired Keyboards"
+    "Orientation", "Dark Mode", "Writing Mode", "Font Size", "Keyboard Layout", "Bluetooth", "Paired Keyboards"
   };
-  const int SETTINGS_COUNT = 6;
+  const int SETTINGS_COUNT = 7;
 
   // Compute line height to fit all items — use smaller spacing if needed
   int lineH = 38;
@@ -554,7 +562,10 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
         case FontSize::MEDIUM: strcpy(val, "Medium"); break;
         default:               strcpy(val, "Large"); break;
       }
-    } else if (i == 5) {
+    } else if (i == 4) {
+      strncpy(val, keyboardLayoutName(currentKeyboardLayout), sizeof(val) - 1);
+      val[sizeof(val) - 1] = '\0';
+    } else if (i == 6) {
       int kbCount = getPairedKeyboardCount();
       if (kbCount == 0) strcpy(val, "None");
       else if (kbCount == 1) strcpy(val, "1 keyboard");
@@ -873,7 +884,8 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       if (cursorX + cursorW < sw)
         renderer.fillRect(cursorX, 66, cursorW, 20, tc);
 
-      drawClippedText(renderer, FONT_SMALL, 20, 110, "Enter: Connect   Esc: Cancel", 0, tc);
+      drawClippedText(renderer, FONT_SMALL, 20, 104, "Password input uses US QWERTY", sw - 40, tc);
+      drawClippedText(renderer, FONT_SMALL, 20, 122, "Enter: Connect   Esc: Cancel", 0, tc);
       break;
     }
 
@@ -978,4 +990,3 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
 
   renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
-

@@ -15,6 +15,7 @@
 #include "file_manager.h"
 #include "ui_renderer.h"
 #include "wifi_sync.h"
+#include "keyboard_layout.h"
 
 // Enum for sleep reasons
 enum class SleepReason {
@@ -61,6 +62,7 @@ bool deleteConfirmPending = false;
 WritingMode writingMode = WritingMode::NORMAL;
 FontSize fontSize = FontSize::LARGE;
 bool showWordCount = true;
+KeyboardLayout currentKeyboardLayout = KeyboardLayout::QWERTY;
 
 // --- OTA App Detection ---
 OtaAppEntry otaApps[MAX_OTA_APPS];
@@ -196,6 +198,7 @@ void setup() {
   writingMode = static_cast<WritingMode>(uiPrefs.getUChar("writeMode", 0));
   fontSize = static_cast<FontSize>(uiPrefs.getUChar("fontSize", 2));
   showWordCount = uiPrefs.getBool("showWC", true);
+  currentKeyboardLayout = keyboardLayoutFromIndex(uiPrefs.getUChar("layout", 0));
 
   // Apply saved orientation
   {
@@ -222,11 +225,13 @@ void setup() {
       int wm = jsonGetInt(uiBuf, "writeMode");
       int fs = jsonGetInt(uiBuf, "fontSize");
       int wc = jsonGetInt(uiBuf, "showWC");
+      int kl = jsonGetInt(uiBuf, "layout");
       if (o  >= 0) { uiPrefs.putUChar("orient",    (uint8_t)o);  currentOrientation = static_cast<Orientation>(o); }
       if (d  >= 0) { uiPrefs.putBool("darkMode",   d != 0);      darkMode           = (d != 0); }
       if (wm >= 0) { uiPrefs.putUChar("writeMode", (uint8_t)wm); writingMode        = static_cast<WritingMode>(wm); }
       if (fs >= 0) { uiPrefs.putUChar("fontSize",  (uint8_t)fs); fontSize           = static_cast<FontSize>(fs); }
       if (wc >= 0) { uiPrefs.putBool("showWC",     wc != 0);     showWordCount      = (wc != 0); }
+      if (kl >= 0) { uiPrefs.putUChar("layout",    (uint8_t)kl); currentKeyboardLayout = keyboardLayoutFromIndex(kl); }
       // Re-apply orientation in case it changed
       GfxRenderer::Orientation gfxOrient = GfxRenderer::Portrait;
       switch (currentOrientation) {
@@ -688,25 +693,30 @@ void loop() {
   static WritingMode lastSavedWritingMode = writingMode;
   static FontSize lastSavedFontSize = fontSize;
   static bool lastSavedShowWordCount = showWordCount;
+  static KeyboardLayout lastSavedKeyboardLayout = currentKeyboardLayout;
   if (currentOrientation != lastSavedOrientation || darkMode != lastSavedDarkMode
       || writingMode != lastSavedWritingMode || fontSize != lastSavedFontSize
-      || showWordCount != lastSavedShowWordCount) {
+      || showWordCount != lastSavedShowWordCount
+      || currentKeyboardLayout != lastSavedKeyboardLayout) {
     uiPrefs.putUChar("orient", static_cast<uint8_t>(currentOrientation));
     uiPrefs.putBool("darkMode", darkMode);
     uiPrefs.putUChar("writeMode", static_cast<uint8_t>(writingMode));
     uiPrefs.putUChar("fontSize", static_cast<uint8_t>(fontSize));
     uiPrefs.putBool("showWC", showWordCount);
+    uiPrefs.putUChar("layout", static_cast<uint8_t>(currentKeyboardLayout));
     lastSavedOrientation = currentOrientation;
     lastSavedDarkMode = darkMode;
     lastSavedWritingMode = writingMode;
     lastSavedFontSize = fontSize;
     lastSavedShowWordCount = showWordCount;
+    lastSavedKeyboardLayout = currentKeyboardLayout;
     // Keep SD backup in sync so settings survive a firmware flash
-    static char uiBuf[128];
+    static char uiBuf[160];
     snprintf(uiBuf, sizeof(uiBuf),
-             "{\"orient\":%d,\"dark\":%d,\"writeMode\":%d,\"fontSize\":%d,\"showWC\":%d}",
+             "{\"orient\":%d,\"dark\":%d,\"writeMode\":%d,\"fontSize\":%d,\"showWC\":%d,\"layout\":%d}",
              (int)currentOrientation, darkMode ? 1 : 0,
-             (int)writingMode, (int)fontSize, showWordCount ? 1 : 0);
+             (int)writingMode, (int)fontSize, showWordCount ? 1 : 0,
+             (int)currentKeyboardLayout);
     if (!SdMan.exists("/microslate")) SdMan.mkdir("/microslate");
     sdWriteFile("/microslate/ui_prefs.json", uiBuf);
   }

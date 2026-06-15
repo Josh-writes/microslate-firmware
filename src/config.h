@@ -32,6 +32,13 @@ enum class WritingMode : uint8_t {
   PAGINATION = 2    // Page-based display instead of scrolling
 };
 
+// --- Keyboard Layouts ---
+enum class KeyboardLayout : uint8_t {
+  QWERTY = 0,
+  RUSSIAN_JCUKEN = 1,
+  GERMAN_QWERTZ = 2
+};
+
 // --- BLE Connection State ---
 enum class BLEState : uint8_t {
   DISCONNECTED,
@@ -98,21 +105,56 @@ inline int editorFontId(FontSize size) {
 // --- HID Keycodes ---
 static constexpr uint8_t HID_KEY_A          = 0x04;
 static constexpr uint8_t HID_KEY_B          = 0x05;
+static constexpr uint8_t HID_KEY_C          = 0x06;
 static constexpr uint8_t HID_KEY_D          = 0x07;
+static constexpr uint8_t HID_KEY_E          = 0x08;
 static constexpr uint8_t HID_KEY_F          = 0x09;
+static constexpr uint8_t HID_KEY_G          = 0x0A;
+static constexpr uint8_t HID_KEY_H          = 0x0B;
+static constexpr uint8_t HID_KEY_I          = 0x0C;
+static constexpr uint8_t HID_KEY_J          = 0x0D;
+static constexpr uint8_t HID_KEY_K          = 0x0E;
+static constexpr uint8_t HID_KEY_L          = 0x0F;
+static constexpr uint8_t HID_KEY_M          = 0x10;
 static constexpr uint8_t HID_KEY_N          = 0x11;
+static constexpr uint8_t HID_KEY_O          = 0x12;
 static constexpr uint8_t HID_KEY_P          = 0x13;
 static constexpr uint8_t HID_KEY_Q          = 0x14;
 static constexpr uint8_t HID_KEY_R          = 0x15;
-static constexpr uint8_t HID_KEY_W          = 0x1A;
 static constexpr uint8_t HID_KEY_S          = 0x16;
 static constexpr uint8_t HID_KEY_T          = 0x17;
+static constexpr uint8_t HID_KEY_U          = 0x18;
+static constexpr uint8_t HID_KEY_V          = 0x19;
+static constexpr uint8_t HID_KEY_W          = 0x1A;
+static constexpr uint8_t HID_KEY_X          = 0x1B;
+static constexpr uint8_t HID_KEY_Y          = 0x1C;
 static constexpr uint8_t HID_KEY_Z          = 0x1D;
+static constexpr uint8_t HID_KEY_1          = 0x1E;
+static constexpr uint8_t HID_KEY_2          = 0x1F;
+static constexpr uint8_t HID_KEY_3          = 0x20;
+static constexpr uint8_t HID_KEY_4          = 0x21;
+static constexpr uint8_t HID_KEY_5          = 0x22;
+static constexpr uint8_t HID_KEY_6          = 0x23;
+static constexpr uint8_t HID_KEY_7          = 0x24;
+static constexpr uint8_t HID_KEY_8          = 0x25;
+static constexpr uint8_t HID_KEY_9          = 0x26;
+static constexpr uint8_t HID_KEY_0          = 0x27;
 static constexpr uint8_t HID_KEY_ENTER      = 0x28;
 static constexpr uint8_t HID_KEY_ESCAPE     = 0x29;
 static constexpr uint8_t HID_KEY_BACKSPACE  = 0x2A;
 static constexpr uint8_t HID_KEY_TAB        = 0x2B;
 static constexpr uint8_t HID_KEY_SPACE      = 0x2C;
+static constexpr uint8_t HID_KEY_MINUS      = 0x2D;
+static constexpr uint8_t HID_KEY_EQUAL      = 0x2E;
+static constexpr uint8_t HID_KEY_LEFTBRACE  = 0x2F;
+static constexpr uint8_t HID_KEY_RIGHTBRACE = 0x30;
+static constexpr uint8_t HID_KEY_BACKSLASH  = 0x31;
+static constexpr uint8_t HID_KEY_SEMICOLON  = 0x33;
+static constexpr uint8_t HID_KEY_APOSTROPHE = 0x34;
+static constexpr uint8_t HID_KEY_GRAVE      = 0x35;
+static constexpr uint8_t HID_KEY_COMMA      = 0x36;
+static constexpr uint8_t HID_KEY_DOT        = 0x37;
+static constexpr uint8_t HID_KEY_SLASH      = 0x38;
 static constexpr uint8_t HID_KEY_DELETE     = 0x4C;
 static constexpr uint8_t HID_KEY_RIGHT      = 0x4F;
 static constexpr uint8_t HID_KEY_LEFT       = 0x50;
@@ -122,6 +164,7 @@ static constexpr uint8_t HID_KEY_HOME       = 0x4A;
 static constexpr uint8_t HID_KEY_END        = 0x4D;
 static constexpr uint8_t HID_KEY_CAPSLOCK   = 0x39;
 static constexpr uint8_t HID_KEY_F2         = 0x3B;
+static constexpr uint8_t HID_KEY_NON_US_BACKSLASH = 0x64;
 
 // --- HID Modifier Masks ---
 static constexpr uint8_t MOD_CTRL_LEFT   = 0x01;
@@ -136,6 +179,12 @@ inline bool isCtrl(uint8_t mod) {
 }
 inline bool isShift(uint8_t mod) {
   return (mod & MOD_SHIFT_LEFT) || (mod & MOD_SHIFT_RIGHT);
+}
+inline bool isAltGr(uint8_t mod) {
+  const bool rightAlt = (mod & MOD_ALT_RIGHT) != 0;
+  const bool ctrlAlt = ((mod & (MOD_CTRL_LEFT | MOD_CTRL_RIGHT)) != 0)
+                    && ((mod & (MOD_ALT_LEFT | MOD_ALT_RIGHT)) != 0);
+  return rightAlt || ctrlAlt;
 }
 
 // --- Debug Logging ---

@@ -17,7 +17,10 @@ static NimBLEClient* pClient = nullptr;
 static NimBLERemoteService* pRemoteService = nullptr;
 static NimBLERemoteCharacteristic* pInputReportChar = nullptr;
 
-static BLEState bleState = BLEState::DISCONNECTED;
+// volatile: written from the BLE host task (callbacks), the connect task, and the
+// main loop. Without it the compiler can cache a stale value and miss transitions,
+// which showed up as reconnect stalls and the occasional race-driven reboot.
+static volatile BLEState bleState = BLEState::DISCONNECTED;
 static bool connectToKeyboard = false;
 static std::string keyboardAddress = "";
 static uint8_t keyboardAddressType = 0;
@@ -50,11 +53,21 @@ static uint32_t scanStartMs = 0;
 static constexpr uint32_t DEVICE_STALE_MS = 10000;  // 10 seconds - reduced to prevent UI slowdown
 
 // FreeRTOS connect task
-static TaskHandle_t connectTaskHandle = nullptr;
+static volatile TaskHandle_t connectTaskHandle = nullptr;
 static volatile bool authSuccess = false;
+
+// When the current connect task started (millis). Used by bleLoop() to detect and
+// recover a wedged connect task so auto-reconnect can't deadlock forever.
+static volatile unsigned long connectTaskStartMs = 0;
 
 // Connection timeout in seconds
 static constexpr uint32_t CONNECT_TIMEOUT_MS = 10000;
+
+// Hard ceiling for the whole connect task (connect + auth + service discovery).
+// Normal worst case is ~17s (10s connect + 5s auth + discovery); past 30s we assume
+// the NimBLE host wedged and force the state machine back to DISCONNECTED so the
+// auto-reconnect cycle resumes instead of the keyboard staying dead until reboot.
+static constexpr unsigned long CONNECT_TASK_TIMEOUT_MS = 30000;
 
 // Global variable to store the passkey for display
 static uint32_t currentPasskey = 0;
@@ -374,10 +387,12 @@ static void bleConnectTask(void* param) {
 
   // Step 1: Connect (blocks this task, main loop continues)
   NimBLEAddress addr(keyboardAddress, keyboardAddressType);
-  // Delete any stored bond before connecting — forces a fresh "Just Works" pairing
-  // instead of an encrypted reconnect. Prevents a NimBLE security-state crash when
-  // the keyboard still holds a stale connection from a previous unclean disconnect.
-  NimBLEDevice::deleteBond(addr);
+  // NOTE: we deliberately do NOT delete the bond here. The old code deleted it on
+  // EVERY connect attempt, forcing a full "Just Works" re-pair each time — which is
+  // why a keyboard that dropped mid-session often failed to come back. Stale
+  // cross-session bonds (the documented NimBLE security-state crash) are cleared once
+  // at boot in bleSetup(); the bond established on the first connect then persists, so
+  // in-session reconnects are fast encrypted reconnects with no re-pairing.
   if (!pClient->connect(addr, true)) {
     DBG_PRINTLN("[BLE-Task] Connection failed");
     bleState = BLEState::DISCONNECTED;
@@ -476,10 +491,13 @@ static void startConnectTask() {
     DBG_PRINTLN("[BLE] Connect task already running");
     return;
   }
+  connectTaskStartMs = millis();  // for the wedged-task recovery guard in bleLoop()
   // 20480 bytes: Logitech has a complex service tree (keyboard + media + battery reports
   // + many descriptors). NimBLE 2.x uses more per-call stack than 1.4.x — 12288 was
   // sufficient before but overflows during full service discovery on the Logitech.
-  xTaskCreate(bleConnectTask, "ble_conn", 20480, NULL, 1, &connectTaskHandle);
+  // Cast drops the volatile qualifier for the FreeRTOS API; xTaskCreate writes the
+  // handle once at creation, before the task is scheduled.
+  xTaskCreate(bleConnectTask, "ble_conn", 20480, NULL, 1, (TaskHandle_t*)&connectTaskHandle);
 }
 
 // --- NVS multi-keyboard helpers ---
@@ -623,6 +641,19 @@ void bleSetup() {
     }
   }
 
+  // Clear possibly-stale cross-session bonds ONCE per boot, before any connect. After an
+  // unclean shutdown a keyboard's old bond can leave NimBLE in a security state that
+  // crashes on the next encrypted reconnect. We wipe stored bonds here at startup and
+  // then never delete them again this session (see bleConnectTask) — so the fresh bond
+  // from the first connect is reused for fast, reliable in-session reconnects.
+  {
+    int n = nvs_loadCount();
+    for (int i = 0; i < n; i++) {
+      std::string a = nvs_loadAddr(i);
+      if (!a.empty()) NimBLEDevice::deleteBond(NimBLEAddress(a, nvs_loadType(i)));
+    }
+  }
+
   // Prime auto-reconnect: start with last-used keyboard, give it 5s before first attempt
   // so the keyboard's supervision timeout from the previous session has time to expire.
   int pairedCount = nvs_loadCount();
@@ -651,6 +682,20 @@ void bleLoop() {
     // Trigger screen refresh to show final results
     extern bool screenDirty;
     screenDirty = true;
+  }
+
+  // Recover from a wedged connect task: if it has run far longer than its own internal
+  // timeouts allow (10s connect + 5s auth + discovery), assume the NimBLE host stalled
+  // and release the gate so auto-reconnect can try again instead of the keyboard staying
+  // dead until reboot. Best-effort: we can't safely kill the task mid-call, but it
+  // self-deletes when it eventually unwinds, and the main loop keeps running meanwhile.
+  if (connectTaskHandle != nullptr && bleState != BLEState::CONNECTED
+      && millis() - connectTaskStartMs > CONNECT_TASK_TIMEOUT_MS) {
+    DBG_PRINTLN("[BLE] Connect task exceeded 30s — assuming wedged, resetting state");
+    connectTaskHandle = nullptr;       // release the reconnect gate
+    bleState = BLEState::DISCONNECTED;
+    if (pClient && pClient->isConnected()) pClient->disconnect();
+    lastReconnectAttempt = millis();
   }
 
   // Launch connect task if requested (non-blocking)

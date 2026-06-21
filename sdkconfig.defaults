@@ -33,3 +33,11 @@ CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
 #
 CONFIG_ESP_PHY_MAC_BB_PD=y
 
+#
+# Task Watchdog — 30s timeout + panic-reboot so a hung loop task recovers cleanly.
+# (IDF default here was 5s with panic off, which only logs and never reboots.)
+# 30s clears the longest blocking loop op (the 10s e-ink BUSY waits).
+#
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+CONFIG_ESP_TASK_WDT_PANIC=y
+

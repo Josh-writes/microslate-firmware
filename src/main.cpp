@@ -256,26 +256,15 @@ void setup() {
   DBG_PRINTF("PM configure: %s\n", esp_err_to_name(pm_err));
 
   // --- Hardware task watchdog -----------------------------------------------
-  // Turns a hang (BLE stack stall, display BUSY pin stuck, SD wedge) into a clean
-  // ~30s auto-reboot instead of a frozen device that needs the manual 5s BACK hold.
-  // 30s is well above the longest blocking op on the loop task: the e-ink BUSY
-  // waits cap at 10s (EInkDisplay.cpp). The BLE connect runs on its own task
-  // (not watched here) so its 10s connect + 5s auth never trip this.
-  // idle_core_mask = 0 so automatic light sleep can't false-trigger the timer.
-  {
-    esp_task_wdt_config_t wdt_cfg = {
-      .timeout_ms = 30000,
-      .idle_core_mask = 0,
-      .trigger_panic = true,
-    };
-    // Arduino core may have already started the TWDT — reconfigure if so, else init.
-    if (esp_task_wdt_reconfigure(&wdt_cfg) != ESP_OK) {
-      esp_task_wdt_init(&wdt_cfg);
-    }
-    esp_task_wdt_add(NULL);   // watch the Arduino loop task
-    esp_task_wdt_reset();
-    DBG_PRINTLN("Task watchdog armed (30s)");
-  }
+  // The IDF inits the Task WDT at boot (CONFIG_ESP_TASK_WDT=y). sdkconfig sets it to 30s
+  // with panic-reboot (CONFIG_ESP_TASK_WDT_TIMEOUT_S=30, CONFIG_ESP_TASK_WDT_PANIC=y);
+  // here we subscribe the Arduino loop task. A loop-task hang (BLE stall, display BUSY
+  // pin stuck, SD wedge) then becomes a clean reboot instead of a freeze that needs the
+  // manual 5s BACK hold. 30s clears the longest blocking loop op — the e-ink BUSY waits
+  // cap at 10s (EInkDisplay.cpp); the BLE connect runs on its own, unwatched task.
+  esp_task_wdt_add(NULL);
+  esp_task_wdt_reset();
+  DBG_PRINTLN("Task watchdog: loop task subscribed (30s, panic)");
 
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;

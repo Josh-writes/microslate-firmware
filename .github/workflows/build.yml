@@ -1,0 +1,65 @@
+name: Build (CI)
+
+# Builds the merged firmware .bin on every push / PR / manual run and uploads it as a
+# downloadable artifact. No tags, no GitHub release, no website push, no secrets — so it
+# runs cleanly on a fork (unlike release.yml, which fires only on v* tags and pushes to
+# the production typeslate website with a secret you won't have).
+#
+# To flash the artifact on macOS (no local toolchain needed):
+#   1. Download the "microslate-firmware" artifact and unzip it.
+#   2. Open https://espressif.github.io/esptool-js/ in Chrome, Connect, and flash
+#      microslate-ci.bin at offset 0x0.  (Or: esptool.py --chip esp32c3 write_flash 0x0 microslate-ci.bin)
+# Rollback at any time by reinstalling the official build from typeslate.com/tools/microslate.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .pio/build
+          key: pio-${{ hashFiles('platformio.ini', 'sdkconfig.defaults') }}
+          restore-keys: pio-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run
+
+      - name: Merge standalone binary
+        run: |
+          pip install esptool
+          BOOT_APP0=$(find ~/.platformio -name "boot_app0.bin" | head -1)
+
+          esptool.py --chip esp32c3 merge_bin \
+            --flash_mode dio --flash_size 16MB \
+            -o microslate-ci.bin \
+            0x0     .pio/build/xteink_x4/bootloader.bin \
+            0x8000  .pio/build/xteink_x4/partitions.bin \
+            0xe000  "$BOOT_APP0" \
+            0x10000 .pio/build/xteink_x4/firmware.bin
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: microslate-firmware
+          path: |
+            microslate-ci.bin
+            .pio/build/xteink_x4/firmware.bin
+          if-no-files-found: error

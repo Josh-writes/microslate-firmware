@@ -5,6 +5,7 @@
 #include <esp_pm.h>
 #include <esp_ota_ops.h>
 #include <esp_app_format.h>
+#include <esp_task_wdt.h>
 #include <Preferences.h>
 #include "sd_backup.h"
 
@@ -254,6 +255,17 @@ void setup() {
   esp_err_t pm_err = esp_pm_configure(&pm_config);
   DBG_PRINTF("PM configure: %s\n", esp_err_to_name(pm_err));
 
+  // --- Hardware task watchdog -----------------------------------------------
+  // The IDF inits the Task WDT at boot (CONFIG_ESP_TASK_WDT=y). sdkconfig sets it to 30s
+  // with panic-reboot (CONFIG_ESP_TASK_WDT_TIMEOUT_S=30, CONFIG_ESP_TASK_WDT_PANIC=y);
+  // here we subscribe the Arduino loop task. A loop-task hang (BLE stall, display BUSY
+  // pin stuck, SD wedge) then becomes a clean reboot instead of a freeze that needs the
+  // manual 5s BACK hold. 30s clears the longest blocking loop op — the e-ink BUSY waits
+  // cap at 10s (EInkDisplay.cpp); the BLE connect runs on its own, unwatched task.
+  esp_task_wdt_add(NULL);
+  esp_task_wdt_reset();
+  DBG_PRINTLN("Task watchdog: loop task subscribed (30s, panic)");
+
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;
 
@@ -274,7 +286,11 @@ void setup() {
 // Enter deep sleep - matches crosspoint pattern
 void enterDeepSleep(SleepReason reason) {
   DBG_PRINTLN("Entering deep sleep...");
-  
+
+  // Stop watching the loop task — the sleep prep below (full refresh + waiting for
+  // the power button to be released) blocks intentionally and must not trip the WDT.
+  esp_task_wdt_delete(NULL);
+
   // Render the sleep screen before entering deep sleep
   renderSleepScreen();
 
@@ -608,6 +624,10 @@ void renderSleepScreen() {
 }
 
 void loop() {
+  // Feed the hardware watchdog every iteration. If the loop ever wedges for >30s
+  // this stops firing and the chip reboots cleanly instead of freezing.
+  esp_task_wdt_reset();
+
   // --- GPIO first: always poll buttons before anything else ---
   gpio.update();
 

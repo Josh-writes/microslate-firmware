@@ -135,6 +135,11 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
       screenDirty = true;
       return;
     }
+    if (keyCode == HID_KEY_K) {
+      currentKeyboardLayout = keyboardLayoutNext(currentKeyboardLayout);
+      screenDirty = true;
+      return;
+    }
     if (keyCode == HID_KEY_P) {
       writingMode = (writingMode == WritingMode::PAGINATION) ? WritingMode::NORMAL : WritingMode::PAGINATION;
       screenDirty = true;

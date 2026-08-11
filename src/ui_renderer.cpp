@@ -337,15 +337,26 @@ static int drawEditorHeader(GfxRenderer& renderer, HalGPIO& gpio, int sw, bool t
   int modeX = sw - 70 - modeW;
   drawClippedText(renderer, FONT_SMALL, modeX, 5, modeInd, modeW + 5, tc);
 
-  // Word count — drawn to the left of the mode indicator
-  int titleMaxW = modeX - 10;
+  // Layout indicator — shown to the left of the mode indicator when non-QWERTY
+  // so the user always knows which layout Ctrl+K will toggle away from.
+  int layoutIndX = modeX - 8;
+  if (currentKeyboardLayout != KeyboardLayout::QWERTY) {
+    const char* layoutInd = keyboardLayoutShortName(currentKeyboardLayout);
+    int layoutW = renderer.getTextAdvanceX(FONT_SMALL, layoutInd);
+    layoutIndX = modeX - 8 - layoutW;
+    if (layoutIndX > 10)
+      drawClippedText(renderer, FONT_SMALL, layoutIndX, 5, layoutInd, layoutW + 5, tc);
+  }
+
+  // Word count — drawn to the left of the layout indicator (or mode indicator)
+  int titleMaxW = layoutIndX - 10;
   if (showWordCount) {
     int wc = editorGetWordCount();
     char wcBuf[24];
     if (wc == 1) snprintf(wcBuf, sizeof(wcBuf), "1 word");
     else         snprintf(wcBuf, sizeof(wcBuf), "%d words", wc);
     int wcW = renderer.getTextAdvanceX(FONT_SMALL, wcBuf);
-    int wcX = modeX - 8 - wcW;
+    int wcX = layoutIndX - 8 - wcW;
     if (wcX > 10) {
       drawClippedText(renderer, FONT_SMALL, wcX, 5, wcBuf, wcW + 5, tc);
       titleMaxW = wcX - 10;

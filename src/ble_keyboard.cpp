@@ -525,6 +525,10 @@ static void nvs_clearSlot(int idx) {
 
 static constexpr char BLE_BACKUP_PATH[] = "/microslate/ble_kb.json";
 
+// Set from the ble_conn task when a new keyboard is stored; consumed by bleLoop()
+// on the main task, which owns all SPI (display + SD) access.
+static volatile bool bleBackupPending = false;
+
 static void writeBleBackup() {
     static char buf[512];
     int count = nvs_loadCount();
@@ -643,6 +647,14 @@ void bleSetup() {
 }
 
 void bleLoop() {
+  // Flush a deferred SD backup requested by the ble_conn task (first-time pairing).
+  // Runs here on the main task so it can never overlap an e-ink refresh on the
+  // shared SPI bus. Wait until the connect task has fully exited.
+  if (bleBackupPending && connectTaskHandle == nullptr) {
+    bleBackupPending = false;
+    writeBleBackup();
+  }
+
   // Detect when a one-shot scan finishes
   if (isScanning && !NimBLEDevice::getScan()->isScanning()) {
     isScanning = false;
@@ -880,7 +892,11 @@ void storePairedDevice(const std::string& address, const std::string& name) {
   prefs.putUChar("last_kb", (uint8_t)idx);
   DBG_PRINTF("[BLE] Stored new paired keyboard slot %d: %s (%s)\n",
              idx, name.c_str(), address.c_str());
-  writeBleBackup();
+  // Do NOT write the SD backup here: this function runs inside the ble_conn task
+  // during a first-time pairing, while the main task may be mid e-ink refresh.
+  // The SD card and display share the SPI bus, and concurrent access from two
+  // tasks corrupts the bus and crashes the device. Defer to bleLoop() (main task).
+  bleBackupPending = true;
 }
 
 bool getStoredDevice(std::string& address, std::string& name) {

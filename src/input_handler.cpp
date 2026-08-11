@@ -3,6 +3,7 @@
 #include "file_manager.h"
 #include "ble_keyboard.h"
 #include "wifi_sync.h"
+#include "keyboard_layout.h"
 
 #include <Arduino.h>
 #include <SDCardManager.h>
@@ -15,6 +16,7 @@ extern bool deleteConfirmPending;
 extern WritingMode writingMode;
 extern FontSize fontSize;
 extern bool showWordCount;
+extern KeyboardLayout currentKeyboardLayout;
 
 // External functions
 void storePairedDevice(const std::string& address, const std::string& name);
@@ -94,49 +96,15 @@ static KeyEvent dequeueKeyEvent() {
 }
 
 char hidToAscii(uint8_t hid, uint8_t modifiers) {
-  bool shifted = isShift(modifiers) ^ capsLockOn;
-
-  // Letters a-z (HID 0x04-0x1D)
-  if (hid >= 0x04 && hid <= 0x1D) {
-    char base = 'a' + (hid - 0x04);
-    return shifted ? (base - 32) : base;
-  }
-
-  // Number row (HID 0x1E-0x27)
-  static const char unshifted[] = "1234567890";
-  static const char shiftedNum[] = "!@#$%^&*()";
-  if (hid >= 0x1E && hid <= 0x27) {
-    int idx = hid - 0x1E;
-    return isShift(modifiers) ? shiftedNum[idx] : unshifted[idx];
-  }
-
-  // Special keys
-  switch (hid) {
-    case 0x28: return '\n';  // Enter
-    case 0x2B: return '\t';  // Tab
-    case 0x2C: return ' ';   // Space
-
-    // Symbol keys
-    case 0x2D: return isShift(modifiers) ? '_' : '-';
-    case 0x2E: return isShift(modifiers) ? '+' : '=';
-    case 0x2F: return isShift(modifiers) ? '{' : '[';
-    case 0x30: return isShift(modifiers) ? '}' : ']';
-    case 0x31: return isShift(modifiers) ? '|' : '\\';
-    case 0x33: return isShift(modifiers) ? ':' : ';';
-    case 0x34: return isShift(modifiers) ? '"' : '\'';
-    case 0x35: return isShift(modifiers) ? '~' : '`';
-    case 0x36: return isShift(modifiers) ? '<' : ',';
-    case 0x37: return isShift(modifiers) ? '>' : '.';
-    case 0x38: return isShift(modifiers) ? '?' : '/';
-
-    default: return 0;
-  }
+  const char* text = keyboardLayoutQwertyText(hid, modifiers, capsLockOn);
+  if (!text || text[0] == '\0' || text[1] != '\0') return 0;
+  return text[0];
 }
 
 // Handle text editor input
 static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
   // Ctrl shortcuts
-  if (isCtrl(modifiers)) {
+  if (isCtrl(modifiers) && !isAltGr(modifiers)) {
     if (keyCode == HID_KEY_S) {
       saveCurrentFile();
       screenDirty = true;
@@ -224,9 +192,9 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
   }
 
   // Printable character
-  char c = hidToAscii(keyCode, modifiers);
-  if (c != 0) {
-    editorInsertChar(c);
+  const char* text = keyboardLayoutText(currentKeyboardLayout, keyCode, modifiers, capsLockOn);
+  if (text != nullptr) {
+    editorInsertText(text);
     screenDirty = true;
   }
 }
@@ -354,12 +322,12 @@ static void dispatchEvent(const KeyEvent& event) {
         FileInfo* files = getFileList();
         loadFile(files[selectedFileIndex].filename);
         screenDirty = true;
-      } else if (isCtrl(event.modifiers) && event.keyCode == HID_KEY_N) {
+      } else if (isCtrl(event.modifiers) && !isAltGr(event.modifiers) && event.keyCode == HID_KEY_N) {
         if (fc > 0) {
           FileInfo* files = getFileList();
           openTitleEdit(files[selectedFileIndex].title, UIState::FILE_BROWSER);
         }
-      } else if (isCtrl(event.modifiers) && event.keyCode == HID_KEY_D) {
+      } else if (isCtrl(event.modifiers) && !isAltGr(event.modifiers) && event.keyCode == HID_KEY_D) {
         if (fc > 0) {
           deleteConfirmPending = true;
           screenDirty = true;
@@ -380,7 +348,7 @@ static void dispatchEvent(const KeyEvent& event) {
       break;
 
     case UIState::SETTINGS: {
-      const int SETTINGS_COUNT = 6;  // Orientation, Dark Mode, Writing Mode, Font Size, Bluetooth, Paired Keyboards
+      const int SETTINGS_COUNT = 7;  // Orientation, Dark Mode, Writing Mode, Font Size, Layout, Bluetooth, Paired Keyboards
 
       // Up/Down: navigate settings list (physical buttons also map here)
       if (event.keyCode == HID_KEY_DOWN) {
@@ -404,8 +372,10 @@ static void dispatchEvent(const KeyEvent& event) {
           int v = static_cast<int>(fontSize);
           fontSize = static_cast<FontSize>((v + 1) % 3);
         } else if (settingsSelection == 4) {
-          currentState = UIState::BLUETOOTH_SETTINGS;
+          currentKeyboardLayout = keyboardLayoutNext(currentKeyboardLayout);
         } else if (settingsSelection == 5) {
+          currentState = UIState::BLUETOOTH_SETTINGS;
+        } else if (settingsSelection == 6) {
           pairedKeyboardSelection = 0;
           currentState = UIState::PAIRED_KEYBOARDS;
         }
@@ -424,6 +394,8 @@ static void dispatchEvent(const KeyEvent& event) {
         } else if (settingsSelection == 3) {
           int v = static_cast<int>(fontSize);
           fontSize = static_cast<FontSize>((v - 1 + 3) % 3);
+        } else if (settingsSelection == 4) {
+          currentKeyboardLayout = keyboardLayoutPrev(currentKeyboardLayout);
         }
         screenDirty = true;
 

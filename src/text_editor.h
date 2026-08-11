@@ -13,6 +13,7 @@ int editorGetCursorPosition();
 
 // Editing operations
 void editorInsertChar(char c);
+void editorInsertText(const char* text);
 void editorDeleteChar();     // Backspace
 void editorDeleteForward();  // Delete key
 

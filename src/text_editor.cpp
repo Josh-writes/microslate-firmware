@@ -7,6 +7,14 @@ static char textBuffer[TEXT_BUFFER_SIZE];
 static size_t textLength = 0;
 static int cursorPosition = 0;
 
+// --- Selection + clipboard ---
+// selectionAnchor < 0 means no selection. When >= 0, the selection is the range
+// between it and cursorPosition (empty if they coincide). The clipboard is a
+// separate buffer that persists across notes (never cleared on load/clear).
+static int selectionAnchor = -1;
+static char clipboard[TEXT_BUFFER_SIZE];
+static size_t clipboardLen = 0;
+
 // --- File metadata ---
 static char currentFile[MAX_FILENAME_LEN] = "";
 static char currentTitle[MAX_TITLE_LEN] = "Untitled";
@@ -179,6 +187,7 @@ void editorInit() {
   memset(textBuffer, 0, TEXT_BUFFER_SIZE);
   textLength = 0;
   cursorPosition = 0;
+  selectionAnchor = -1;
   currentFile[0] = '\0';
   strncpy(currentTitle, "Untitled", MAX_TITLE_LEN - 1);
   unsavedChanges = false;
@@ -191,6 +200,7 @@ void editorClear() {
   memset(textBuffer, 0, TEXT_BUFFER_SIZE);
   textLength = 0;
   cursorPosition = 0;
+  selectionAnchor = -1;
   unsavedChanges = false;
   viewportStartLine = 0;
   lineBreaksDirty = true;
@@ -201,6 +211,7 @@ void editorLoadBuffer(size_t length) {
   textLength = length;
   textBuffer[textLength] = '\0';
   cursorPosition = (int)textLength;  // Start at end
+  selectionAnchor = -1;
   viewportStartLine = 0;
   lineBreaksDirty = true;
   editorRecalculateLines();
@@ -233,6 +244,13 @@ void editorInsertChar(char c) {
 
 void editorInsertText(const char* text) {
   if (!text || text[0] == '\0') return;
+  // Typing over a selection replaces it.
+  if (editorHasSelection()) {
+    int lo, hi;
+    editorGetSelectionRange(&lo, &hi);
+    selectionAnchor = -1;
+    deleteByteRange(lo, hi);  // cursor now at lo
+  }
   size_t insertLen = strlen(text);
   if (textLength + insertLen >= TEXT_BUFFER_SIZE) return;
 
@@ -252,6 +270,13 @@ void editorInsertText(const char* text) {
 }
 
 void editorDeleteChar() {
+  if (editorHasSelection()) {
+    int lo, hi;
+    editorGetSelectionRange(&lo, &hi);
+    selectionAnchor = -1;
+    deleteByteRange(lo, hi);
+    return;
+  }
   if (cursorPosition <= 0 || textLength == 0) return;
 
   int start = utf8PrevPos(cursorPosition);
@@ -259,13 +284,41 @@ void editorDeleteChar() {
 }
 
 void editorDeleteForward() {
+  if (editorHasSelection()) {
+    int lo, hi;
+    editorGetSelectionRange(&lo, &hi);
+    selectionAnchor = -1;
+    deleteByteRange(lo, hi);
+    return;
+  }
   if (cursorPosition >= (int)textLength) return;
 
   int end = utf8NextPos(cursorPosition);
   deleteByteRange(cursorPosition, end);
 }
 
-void editorMoveCursorLeft() {
+// Called at the start of a cursor move: extend=true arms/keeps the selection
+// anchor; extend=false drops any selection.
+static void updateSelectionAnchor(bool extend) {
+  if (extend) {
+    if (selectionAnchor < 0) selectionAnchor = cursorPosition;
+  } else {
+    selectionAnchor = -1;
+  }
+}
+
+void editorMoveCursorLeft(bool extend) {
+  // Plain Left with a selection collapses to its left edge, without moving further.
+  if (!extend && editorHasSelection()) {
+    int lo, hi;
+    editorGetSelectionRange(&lo, &hi);
+    selectionAnchor = -1;
+    cursorPosition = lo;
+    editorRecalculateLines();
+    ensureCursorVisible(storedVisibleLines);
+    return;
+  }
+  updateSelectionAnchor(extend);
   if (cursorPosition > 0) {
     cursorPosition = utf8PrevPos(cursorPosition);
     editorRecalculateLines();
@@ -273,7 +326,17 @@ void editorMoveCursorLeft() {
   }
 }
 
-void editorMoveCursorRight() {
+void editorMoveCursorRight(bool extend) {
+  if (!extend && editorHasSelection()) {
+    int lo, hi;
+    editorGetSelectionRange(&lo, &hi);
+    selectionAnchor = -1;
+    cursorPosition = hi;
+    editorRecalculateLines();
+    ensureCursorVisible(storedVisibleLines);
+    return;
+  }
+  updateSelectionAnchor(extend);
   if (cursorPosition < (int)textLength) {
     cursorPosition = utf8NextPos(cursorPosition);
     editorRecalculateLines();
@@ -281,7 +344,8 @@ void editorMoveCursorRight() {
   }
 }
 
-void editorMoveCursorUp() {
+void editorMoveCursorUp(bool extend) {
+  updateSelectionAnchor(extend);
   // cursorLine/cursorCol are already valid from the previous operation
   if (cursorLine <= 0) return;
 
@@ -294,7 +358,8 @@ void editorMoveCursorUp() {
   ensureCursorVisible(storedVisibleLines);
 }
 
-void editorMoveCursorDown() {
+void editorMoveCursorDown(bool extend) {
+  updateSelectionAnchor(extend);
   if (cursorLine >= lineCount - 1) return;
 
   int targetLine = cursorLine + 1;
@@ -306,13 +371,15 @@ void editorMoveCursorDown() {
   ensureCursorVisible(storedVisibleLines);
 }
 
-void editorMoveCursorHome() {
+void editorMoveCursorHome(bool extend) {
+  updateSelectionAnchor(extend);
   cursorPosition = linePositions[cursorLine];
   editorRecalculateLines();
   ensureCursorVisible(storedVisibleLines);
 }
 
-void editorMoveCursorEnd() {
+void editorMoveCursorEnd(bool extend) {
+  updateSelectionAnchor(extend);
   int lineEnd;
   if (cursorLine + 1 < lineCount) {
     lineEnd = linePositions[cursorLine + 1];
@@ -324,6 +391,59 @@ void editorMoveCursorEnd() {
   cursorPosition = lineEnd;
   editorRecalculateLines();
   ensureCursorVisible(storedVisibleLines);
+}
+
+// --- Selection + clipboard ---
+
+bool editorHasSelection() {
+  return selectionAnchor >= 0 && selectionAnchor != cursorPosition;
+}
+
+bool editorGetSelectionRange(int* lo, int* hi) {
+  if (!editorHasSelection()) return false;
+  int a = selectionAnchor;
+  int b = cursorPosition;
+  if (a > b) { int t = a; a = b; b = t; }
+  if (lo) *lo = a;
+  if (hi) *hi = b;
+  return true;
+}
+
+void editorSelectAll() {
+  if (textLength == 0) return;
+  selectionAnchor = 0;
+  cursorPosition = (int)textLength;
+  editorRecalculateLines();
+  ensureCursorVisible(storedVisibleLines);
+}
+
+void editorCopy() {
+  int lo, hi;
+  if (!editorGetSelectionRange(&lo, &hi)) return;
+  size_t n = (size_t)(hi - lo);
+  if (n >= TEXT_BUFFER_SIZE) n = TEXT_BUFFER_SIZE - 1;
+  memcpy(clipboard, textBuffer + lo, n);
+  clipboard[n] = '\0';
+  clipboardLen = n;
+}
+
+void editorCut() {
+  int lo, hi;
+  if (!editorGetSelectionRange(&lo, &hi)) return;
+  editorCopy();
+  selectionAnchor = -1;
+  deleteByteRange(lo, hi);  // sets cursor = lo, recalculates
+}
+
+void editorPaste() {
+  if (clipboardLen == 0) return;
+  // Replace an active selection, then insert the clipboard at the caret.
+  int lo, hi;
+  if (editorGetSelectionRange(&lo, &hi)) {
+    selectionAnchor = -1;
+    deleteByteRange(lo, hi);
+  }
+  editorInsertText(clipboard);  // bounds-checked; no-op if it would overflow
 }
 
 void editorSetCharsPerLine(int cpl) {

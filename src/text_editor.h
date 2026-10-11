@@ -17,13 +17,26 @@ void editorInsertText(const char* text);
 void editorDeleteChar();     // Backspace
 void editorDeleteForward();  // Delete key
 
-// Cursor movement
-void editorMoveCursorLeft();
-void editorMoveCursorRight();
-void editorMoveCursorUp();
-void editorMoveCursorDown();
-void editorMoveCursorHome();
-void editorMoveCursorEnd();
+// Cursor movement. extend=true keeps an anchor so the range between the anchor
+// and the cursor becomes the selection (Shift+arrow). extend=false collapses an
+// existing selection: Left/Right jump to its edge and stop; the others drop the
+// selection and move from the caret.
+void editorMoveCursorLeft(bool extend = false);
+void editorMoveCursorRight(bool extend = false);
+void editorMoveCursorUp(bool extend = false);
+void editorMoveCursorDown(bool extend = false);
+void editorMoveCursorHome(bool extend = false);
+void editorMoveCursorEnd(bool extend = false);
+
+// Selection + clipboard. Selection is empty when anchor == cursor; the range is a
+// half-open byte interval [lo, hi) on character boundaries. The clipboard is
+// internal to the device and survives opening/creating another note.
+void editorSelectAll();
+bool editorHasSelection();
+bool editorGetSelectionRange(int* lo, int* hi);
+void editorCopy();
+void editorCut();
+void editorPaste();
 
 // Line/viewport management
 void editorSetCharsPerLine(int cpl);

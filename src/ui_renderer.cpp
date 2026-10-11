@@ -263,7 +263,7 @@ void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
 
 // Helper: draw a single editor line from the buffer
 static void drawEditorLine(GfxRenderer& renderer, int lineIdx, int x, int yPos,
-                           int maxW, bool tc) {
+                           int lineHeight, int maxW, bool tc) {
   char* buf = editorGetBuffer();
   size_t bufLen = editorGetLength();
   int totalLines = editorGetLineCount();
@@ -274,12 +274,39 @@ static void drawEditorLine(GfxRenderer& renderer, int lineIdx, int x, int yPos,
   if (dispEnd > lineStart && buf[dispEnd - 1] == '\n') dispEnd--;
 
   int len = dispEnd - lineStart;
-  if (len > 0) {
-    char lineBuf[512];
-    int copyLen = (len < (int)sizeof(lineBuf) - 1) ? len : (int)sizeof(lineBuf) - 1;
-    strncpy(lineBuf, buf + lineStart, copyLen);
-    lineBuf[copyLen] = '\0';
-    drawClippedText(renderer, editorFontId(fontSize), x, yPos, lineBuf, maxW, tc);
+  if (len <= 0) return;
+
+  char lineBuf[512];
+  int copyLen = (len < (int)sizeof(lineBuf) - 1) ? len : (int)sizeof(lineBuf) - 1;
+  strncpy(lineBuf, buf + lineStart, copyLen);
+  lineBuf[copyLen] = '\0';
+
+  int fontId = editorFontId(fontSize);
+
+  // Draw the line normally first.
+  drawClippedText(renderer, fontId, x, yPos, lineBuf, maxW, tc);
+
+  // Overlay the selection on this line as inverse video, if any overlaps it.
+  int selLo, selHi;
+  if (editorGetSelectionRange(&selLo, &selHi)) {
+    int a = (selLo > lineStart) ? selLo : lineStart;       // clamp to line
+    int b = (selHi < dispEnd)  ? selHi : dispEnd;
+    int aOff = a - lineStart;
+    int bOff = b - lineStart;
+    if (aOff < 0) aOff = 0;
+    if (bOff > copyLen) bOff = copyLen;
+    if (bOff > aOff) {
+      char pre[512], sel[512];
+      strncpy(pre, lineBuf, aOff); pre[aOff] = '\0';
+      int selLen = bOff - aOff;
+      strncpy(sel, lineBuf + aOff, selLen); sel[selLen] = '\0';
+      int xA = x + renderer.getTextAdvanceX(fontId, pre);
+      int selW = renderer.getTextAdvanceX(fontId, sel);
+      // Solid block in the text colour, then the selected text in the background
+      // colour on top → inverse video.
+      clippedFillRect(renderer, xA, yPos, selW, lineHeight, tc);
+      drawClippedText(renderer, fontId, xA, yPos, sel, maxW - (xA - x), !tc);
+    }
   }
 }
 
@@ -403,7 +430,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
 
     // Draw only the current line
     if (curLine < totalLines) {
-      drawEditorLine(renderer, curLine, 10, centerY, sw - 20, tc);
+      drawEditorLine(renderer, curLine, 10, centerY, lineHeight, sw - 20, tc);
     }
 
     // Draw cursor
@@ -444,7 +471,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
     // Draw lines for this page
     for (int i = 0; i < linesPerPage && (pageStart + i) < totalLines; i++) {
       int yPos = textAreaTop + (i * lineHeight);
-      drawEditorLine(renderer, pageStart + i, 10, yPos, sw - 20, tc);
+      drawEditorLine(renderer, pageStart + i, 10, yPos, lineHeight, sw - 20, tc);
     }
 
     // Draw cursor if on this page
@@ -471,7 +498,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
   // Draw visible lines
   for (int i = 0; i < visibleLines && (vpStart + i) < totalLines; i++) {
     int yPos = textAreaTop + (i * lineHeight);
-    drawEditorLine(renderer, vpStart + i, 10, yPos, sw - 20, tc);
+    drawEditorLine(renderer, vpStart + i, 10, yPos, lineHeight, sw - 20, tc);
   }
 
   // Draw cursor

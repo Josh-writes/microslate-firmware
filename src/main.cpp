@@ -48,9 +48,13 @@ int selectedFileIndex = 0;
 int settingsSelection = 0;
 int bluetoothDeviceSelection = 0;
 int pairedKeyboardSelection = 0;
+bool pairedForgetPending = false;   // true while a "Forget keyboard?" confirmation is armed
 Orientation currentOrientation = Orientation::PORTRAIT;
 int charsPerLine = 40;
 bool screenDirty = true;
+bool btShowAllDevices = true;    // Bluetooth scan: show ALL devices by default (HID classification
+                                 // is unreliable — many keyboards don't advertise HID pre-connect,
+                                 // so hiding would drop them). Toggle can filter to keyboards-only.
 
 // Rename buffer
 char renameBuffer[MAX_FILENAME_LEN] = "";
@@ -516,13 +520,18 @@ static void processPhysicalButtons() {
       break;
 
     case UIState::PAIRED_KEYBOARDS:
-      if ((btnUp && !btnUpLast) || (btnRight && !btnRightLast)) {
+      if (btnUp && !btnUpLast) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);
       }
       if ((btnDown && !btnDownLast) || (btnLeft && !btnLeftLast)) {
         enqueueKeyEvent(HID_KEY_DOWN, 0, true);
         enqueueKeyEvent(HID_KEY_DOWN, 0, false);
+      }
+      if (btnRight && !btnRightLast) {
+        // Forget selected keyboard (arms an on-screen confirmation)
+        enqueueKeyEvent(HID_KEY_D, 0, true);
+        enqueueKeyEvent(HID_KEY_D, 0, false);
       }
       if (btnConfirm && !btnConfirmLast) {
         enqueueKeyEvent(HID_KEY_ENTER, 0, true);

@@ -53,7 +53,9 @@ extern int mainMenuSelection;
 extern int selectedFileIndex;
 extern int settingsSelection;
 extern int bluetoothDeviceSelection;
+extern bool btShowAllDevices;
 extern int pairedKeyboardSelection;
+extern bool pairedForgetPending;
 extern Orientation currentOrientation;
 extern int charsPerLine;
 extern bool screenDirty;
@@ -353,7 +355,7 @@ static void dispatchEvent(const KeyEvent& event) {
       break;
 
     case UIState::SETTINGS: {
-      const int SETTINGS_COUNT = 7;  // Orientation, Dark Mode, Writing Mode, Font Size, Layout, Bluetooth, Paired Keyboards
+      const int SETTINGS_COUNT = 8;  // Orientation, Dark Mode, Writing Mode, Font Size, Layout, BLE Power, Bluetooth, Paired Keyboards
 
       // Up/Down: navigate settings list (physical buttons also map here)
       if (event.keyCode == HID_KEY_DOWN) {
@@ -379,9 +381,14 @@ static void dispatchEvent(const KeyEvent& event) {
         } else if (settingsSelection == 4) {
           currentKeyboardLayout = keyboardLayoutNext(currentKeyboardLayout);
         } else if (settingsSelection == 5) {
-          currentState = UIState::BLUETOOTH_SETTINGS;
+          cycleBleTxPower(+1);   // more power (adjustable in place, like Font Size)
         } else if (settingsSelection == 6) {
+          bluetoothDeviceSelection = 0;
+          btShowAllDevices = true;   // default to showing all (see note at definition)
+          currentState = UIState::BLUETOOTH_SETTINGS;
+        } else if (settingsSelection == 7) {
           pairedKeyboardSelection = 0;
+          pairedForgetPending = false;
           currentState = UIState::PAIRED_KEYBOARDS;
         }
         screenDirty = true;
@@ -401,6 +408,8 @@ static void dispatchEvent(const KeyEvent& event) {
           fontSize = static_cast<FontSize>((v - 1 + 3) % 3);
         } else if (settingsSelection == 4) {
           currentKeyboardLayout = keyboardLayoutPrev(currentKeyboardLayout);
+        } else if (settingsSelection == 5) {
+          cycleBleTxPower(-1);   // less power
         }
         screenDirty = true;
 
@@ -412,45 +421,47 @@ static void dispatchEvent(const KeyEvent& event) {
     }
 
     case UIState::BLUETOOTH_SETTINGS: {
-      int deviceCount = getDiscoveredDeviceCount();
+      // Build the visible list (keyboards first; others only when "show all").
+      // The last selectable row may be the "Show other devices" toggle.
+      int visIdx[32];
+      int total = 0, kbd = 0;
+      int visCount = getVisibleDeviceIndices(btShowAllDevices, visIdx, 32, &total, &kbd);
+      bool toggleShown = (kbd > 0 && total > kbd);   // a real filter choice exists
+      int itemCount = visCount + (toggleShown ? 1 : 0);
 
-      // Ensure selection is within bounds
-      if (bluetoothDeviceSelection >= deviceCount && deviceCount > 0) {
-        bluetoothDeviceSelection = deviceCount - 1;
-      } else if (deviceCount == 0) {
-        bluetoothDeviceSelection = 0; // Reset to 0 when no devices
-      }
+      // Keep selection in range
+      if (itemCount == 0) bluetoothDeviceSelection = 0;
+      else if (bluetoothDeviceSelection >= itemCount) bluetoothDeviceSelection = itemCount - 1;
+      if (bluetoothDeviceSelection < 0) bluetoothDeviceSelection = 0;
+
+      bool onToggle = (toggleShown && bluetoothDeviceSelection == visCount);
 
       if (event.keyCode == HID_KEY_ESCAPE) {
-        DBG_PRINTLN("[INPUT] BT: Escape pressed - returning to settings");
         currentState = UIState::SETTINGS;
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_DOWN) {
-        if (deviceCount > 0) {
-          bluetoothDeviceSelection = (bluetoothDeviceSelection + 1) % deviceCount;
-          DBG_PRINTF("[INPUT] BT: Down pressed - selection now %d/%d\n", bluetoothDeviceSelection, deviceCount);
+        if (itemCount > 0) {
+          bluetoothDeviceSelection = (bluetoothDeviceSelection + 1) % itemCount;
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_UP) {
-        if (deviceCount > 0) {
-          bluetoothDeviceSelection = (bluetoothDeviceSelection - 1 + deviceCount) % deviceCount;
-          DBG_PRINTF("[INPUT] BT: Up pressed - selection now %d/%d\n", bluetoothDeviceSelection, deviceCount);
+        if (itemCount > 0) {
+          bluetoothDeviceSelection = (bluetoothDeviceSelection - 1 + itemCount) % itemCount;
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ENTER) {
-        if (deviceCount > 0 && !isDeviceScanning()) {
-          // Connect to the selected device
-          connectToDevice(bluetoothDeviceSelection);
+        if (onToggle) {
+          btShowAllDevices = !btShowAllDevices;   // flip filter, reset to top
+          bluetoothDeviceSelection = 0;
+        } else if (visCount > 0 && !isDeviceScanning()) {
+          connectToDevice(visIdx[bluetoothDeviceSelection]);
         } else if (!isDeviceScanning()) {
-          // No devices — start a new scan
-          startDeviceScan();
+          startDeviceScan();   // nothing to connect to — scan instead
         }
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_RIGHT) {
         // Right button = re-scan for devices
-        if (!isDeviceScanning()) {
-          startDeviceScan();
-        }
+        if (!isDeviceScanning()) startDeviceScan();
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_LEFT) {
         if (isKeyboardConnected()) {
@@ -465,30 +476,46 @@ static void dispatchEvent(const KeyEvent& event) {
       int count = getPairedKeyboardCount();
 
       if (event.keyCode == HID_KEY_ESCAPE) {
-        currentState = UIState::SETTINGS;
-        screenDirty = true;
+        if (pairedForgetPending) {
+          pairedForgetPending = false;   // cancel the confirmation, stay on screen
+          screenDirty = true;
+        } else {
+          currentState = UIState::SETTINGS;
+          screenDirty = true;
+        }
       } else if (event.keyCode == HID_KEY_DOWN) {
+        pairedForgetPending = false;     // moving the selection cancels a pending forget
         if (count > 0) {
           pairedKeyboardSelection = (pairedKeyboardSelection + 1) % count;
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_UP) {
+        pairedForgetPending = false;
         if (count > 0) {
           pairedKeyboardSelection = (pairedKeyboardSelection - 1 + count) % count;
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ENTER) {
         if (count > 0) {
-          connectToPairedKeyboard(pairedKeyboardSelection);
-          currentState = UIState::SETTINGS;
-          screenDirty = true;
+          if (pairedForgetPending) {
+            // Enter confirms the forget
+            removePairedKeyboard(pairedKeyboardSelection);
+            pairedForgetPending = false;
+            int newCount = getPairedKeyboardCount();
+            if (newCount == 0) pairedKeyboardSelection = 0;
+            else if (pairedKeyboardSelection >= newCount)
+              pairedKeyboardSelection = newCount - 1;
+            screenDirty = true;
+          } else {
+            connectToPairedKeyboard(pairedKeyboardSelection);
+            currentState = UIState::SETTINGS;
+            screenDirty = true;
+          }
         }
       } else if (event.keyCode == HID_KEY_D) {
+        // Arm the forget confirmation (Right button on-device, or 'D' on a keyboard)
         if (count > 0) {
-          removePairedKeyboard(pairedKeyboardSelection);
-          int newCount = getPairedKeyboardCount();
-          if (pairedKeyboardSelection >= newCount && newCount > 0)
-            pairedKeyboardSelection = newCount - 1;
+          pairedForgetPending = true;
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_LEFT) {

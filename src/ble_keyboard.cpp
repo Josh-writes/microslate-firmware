@@ -80,7 +80,19 @@ int getLastUsedKeyboardIndex();
 static void upsertDevice(const BleDeviceInfo& info) {
   for (auto &d : discoveredDevices) {
     if (d.address == info.address) {
+      // Preserve a previously-captured real name. A device sends several
+      // advertising packets; the name often arrives only in the scan response,
+      // while plain ADV packets have none (name == address). Without this, a
+      // later name-less packet would clobber the real name back to the MAC.
+      bool hadRealName = (d.name != d.address);
+      bool newHasRealName = (info.name != info.address);
+      std::string keptName = d.name;
+      bool keptHid = d.isHid;
+      uint16_t keptAppearance = d.appearance;
       d = info;
+      if (hadRealName && !newHasRealName) d.name = keptName;
+      d.isHid = d.isHid || keptHid;                       // HID flag is sticky once seen
+      if (d.appearance == 0) d.appearance = keptAppearance; // keep appearance if this packet lacked it
       return;
     }
   }
@@ -176,6 +188,11 @@ static class ScanCallbacks : public NimBLEScanCallbacks {
     info.rssi = dev->getRSSI();
     info.addressType = dev->getAddress().getType();
     info.lastSeenMs = millis();
+    // Classify so the UI can show keyboards first and hide clutter. Active scan
+    // folds scan-response data in here too. Not guaranteed (some keyboards only
+    // expose HID after connecting), so this only MARKS — never hides permanently.
+    info.isHid = dev->isAdvertisingService(NimBLEUUID((uint16_t)0x1812));
+    info.appearance = dev->getAppearance();
     upsertDevice(info);
     extern bool screenDirty;
     screenDirty = true;
@@ -492,12 +509,15 @@ static void startConnectTask() {
     return;
   }
   connectTaskStartMs = millis();  // for the wedged-task recovery guard in bleLoop()
-  // 20480 bytes: Logitech has a complex service tree (keyboard + media + battery reports
+  // 32768 bytes: Logitech has a complex service tree (keyboard + media + battery reports
   // + many descriptors). NimBLE 2.x uses more per-call stack than 1.4.x — 12288 was
   // sufficient before but overflows during full service discovery on the Logitech.
+  // Raised from 20480: keyboards with even heavier service trees (e.g. some split/ZMK
+  // boards) still panicked during discovery at 20480. ~200KB of free heap is available
+  // here, so the extra 12KB is cheap insurance; trim back only if RAM gets tight.
   // Cast drops the volatile qualifier for the FreeRTOS API; xTaskCreate writes the
   // handle once at creation, before the task is scheduled.
-  xTaskCreate(bleConnectTask, "ble_conn", 20480, NULL, 1, (TaskHandle_t*)&connectTaskHandle);
+  xTaskCreate(bleConnectTask, "ble_conn", 32768, NULL, 1, (TaskHandle_t*)&connectTaskHandle);
 }
 
 // --- NVS multi-keyboard helpers ---
@@ -597,13 +617,49 @@ uint32_t getCurrentPasskey() {
   return currentPasskey;
 }
 
+// --- BLE transmit power -----------------------------------------------------
+// Discrete steps in dBm, low->high. -9 is the battery-friendly default (verified
+// rock-solid with the author's keyboards); +9 is the chip maximum for weak or
+// distant keyboards whose own transmitter / antenna leaves the link at the edge.
+// Radio power is a real share of this device's battery budget, so the default
+// stays low and higher steps are strictly opt-in via Settings -> BLE Power.
+static const int8_t kTxPowerSteps[] = { -9, -3, 0, 3, 9 };
+static constexpr int kTxPowerStepCount =
+    sizeof(kTxPowerSteps) / sizeof(kTxPowerSteps[0]);
+static int g_txPowerIdx = 0;  // index into kTxPowerSteps; 0 => -9 dBm
+
+static void applyBleTxPower() {
+  NimBLEDevice::setPower(kTxPowerSteps[g_txPowerIdx]);
+}
+
+int8_t getBleTxPower() { return kTxPowerSteps[g_txPowerIdx]; }
+
+const char* getBleTxPowerLabel() {
+  static char buf[20];
+  const char* tag = "";
+  if (g_txPowerIdx == 0) tag = " (Battery)";
+  else if (g_txPowerIdx == kTxPowerStepCount - 1) tag = " (Max)";
+  snprintf(buf, sizeof(buf), "%+d dBm%s", (int)kTxPowerSteps[g_txPowerIdx], tag);
+  return buf;
+}
+
+void cycleBleTxPower(int dir) {
+  g_txPowerIdx =
+      (g_txPowerIdx + (dir >= 0 ? 1 : -1) + kTxPowerStepCount) % kTxPowerStepCount;
+  applyBleTxPower();                                  // takes effect live (global)
+  prefs.putChar("tx_power", kTxPowerSteps[g_txPowerIdx]);  // persist chosen dBm
+}
+
 void bleSetup() {
   NimBLEDevice::init("MicroSlate");
-  // bond=true, MITM=false (we don't require it), SC=false (legacy compat for Logitech etc.)
-  // DISPLAY_YESNO: we can show a number and confirm — lets keyboards that *do* want
-  // numeric comparison (Apple Magic Keyboard, etc.) initiate it while still falling
-  // back to "Just Works" for keyboards that don't need it.
-  NimBLEDevice::setSecurityAuth(true, false, false);
+  // bond=true, MITM=false (we don't require it), SC=true (LE Secure Connections).
+  // Upstream offered only Legacy Pairing (SC=false); keyboards advertising BT 5.0
+  // often *require* SC and refuse Legacy outright — the GAP link comes up but
+  // pairing is rejected, so the device reports "Connected" while the keyboard
+  // sends nothing and no bond is stored. SC=true fixes that while MITM=false +
+  // NO_INPUT_OUTPUT keeps it "Just Works" (no passkey), so Logitech/Keychron etc.
+  // all still pair without prompting.
+  NimBLEDevice::setSecurityAuth(true, false, true);
   // NO_INPUT_OUTPUT = "Just Works" pairing — works for both Logitech and Keychron
   // since MITM=false means we never require authenticated pairing regardless of IO cap.
   // DISPLAY_YESNO was tried for Keychron but broke Logitech (bond/security-state mismatch
@@ -613,9 +669,17 @@ void bleSetup() {
   // and which caused bond-validation failures after the security param change.
   NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC);
   NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC);
-  NimBLEDevice::setPower(-9);  // -9dBm — lowest verified working power level
 
   prefs.begin("ble_kb", false);
+
+  // TX power: restore saved level (default -9 dBm). Applied after prefs opens so
+  // the user's Settings -> BLE Power choice survives reboots.
+  int8_t savedTx = prefs.getChar("tx_power", -9);
+  g_txPowerIdx = 0;
+  for (int i = 0; i < kTxPowerStepCount; i++) {
+    if (kTxPowerSteps[i] == savedTx) { g_txPowerIdx = i; break; }
+  }
+  applyBleTxPower();
 
   // Restore from SD backup if NVS was wiped (e.g. after a firmware flash)
   if (!prefs.isKey("kb_count")) restoreBleBackup();
@@ -792,6 +856,33 @@ int getDiscoveredDeviceCount() {
 
 BleDeviceInfo* getDiscoveredDevices() {
   return discoveredDevices.empty() ? nullptr : discoveredDevices.data();
+}
+
+bool bleDeviceIsLikelyKeyboard(const BleDeviceInfo& d) {
+  if (d.isHid) return true;
+  // BLE appearance values: 0x03C0 = Generic HID, 0x03C1 = Keyboard
+  if (d.appearance == 0x03C0 || d.appearance == 0x03C1) return true;
+  return false;
+}
+
+int getVisibleDeviceIndices(bool showAll, int* idxOut, int maxOut,
+                            int* outTotal, int* outKeyboards) {
+  int total = (int)discoveredDevices.size();
+  int kbd = 0;
+  for (auto& d : discoveredDevices) if (bleDeviceIsLikelyKeyboard(d)) kbd++;
+  if (outTotal) *outTotal = total;
+  if (outKeyboards) *outKeyboards = kbd;
+
+  // Fallback: if nothing classified as a keyboard, show everything so the user
+  // can still reach a keyboard that didn't advertise HID before connecting.
+  bool effectiveAll = showAll || (kbd == 0);
+
+  int n = 0;
+  for (int i = 0; i < total && n < maxOut; i++) {
+    if (effectiveAll || bleDeviceIsLikelyKeyboard(discoveredDevices[i]))
+      idxOut[n++] = i;
+  }
+  return n;
 }
 
 void connectToDevice(int deviceIndex) {

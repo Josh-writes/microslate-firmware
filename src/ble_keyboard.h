@@ -10,7 +10,22 @@ struct BleDeviceInfo {
   int rssi;
   uint8_t addressType;    // BLE address type (public/random)
   uint32_t lastSeenMs;    // from millis()
+  bool isHid = false;     // advertises the HID service (0x1812)
+  uint16_t appearance = 0; // BLE appearance (0x03C1 = keyboard), 0 if not advertised
 };
+
+// True if the device looks like a keyboard (advertises HID or a HID/keyboard
+// appearance). Classification is a hint only — never used to make a device
+// permanently unreachable (see getVisibleDeviceIndices fallback).
+bool bleDeviceIsLikelyKeyboard(const BleDeviceInfo& d);
+
+// Fills idxOut with indices into the discovered-device array that should be
+// shown. When showAll is false, only likely keyboards are shown — UNLESS none
+// are found, in which case all devices are shown (so the user is never stuck).
+// Reports the total device count and the keyboard count via the out params.
+// Returns the number of indices written (<= maxOut).
+int getVisibleDeviceIndices(bool showAll, int* idxOut, int maxOut,
+                            int* outTotal, int* outKeyboards);
 
 void bleSetup();
 void bleLoop();
@@ -46,6 +61,13 @@ void clearStoredDevice();
 
 // Function for getting current passkey for UI display
 uint32_t getCurrentPasskey();
+
+// BLE transmit power (dBm). Default -9 (lowest step, best battery life). Higher
+// steps improve link margin for weak/distant keyboards at a continuous battery
+// cost. Cycles through discrete steps; persisted in NVS. Pure BLE — portable.
+int8_t      getBleTxPower();
+const char* getBleTxPowerLabel();  // e.g. "-9 dBm (Battery)" for the settings UI
+void        cycleBleTxPower(int dir);  // dir>=0: more power, dir<0: less
 
 // Bluetooth scanning status functions
 bool isDeviceScanning();

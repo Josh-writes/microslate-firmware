@@ -33,10 +33,12 @@ static Preferences prefs;
 // Global flag to control auto-reconnect behavior
 bool autoReconnectEnabled = true;
 
-// Reconnection backoff
-static unsigned long reconnectDelay = 5000;   // 5s initial — gives keyboard time to release old connection after deep sleep
+// Reconnection backoff. Starts at 5s and is capped at 5s — i.e. a steady 5s retry.
+// (The old 2min cap made a keyboard that returned after a while take minutes to
+// reconnect.) Last-used keyboard is tried first (reconnectKeyboardIndex seeding).
+static unsigned long reconnectDelay = 5000;   // 5s — gives the keyboard time to release its old link
 static unsigned long lastReconnectAttempt = 0;
-static constexpr unsigned long MAX_RECONNECT_DELAY = 120000;  // Cap at 2min (was 60s)
+static constexpr unsigned long MAX_RECONNECT_DELAY = 5000;  // steady 5s fallback polling
 
 // Multi-keyboard cycling: index of the keyboard to try on the next auto-reconnect attempt
 static int reconnectKeyboardIndex = 0;
@@ -62,6 +64,13 @@ static volatile unsigned long connectTaskStartMs = 0;
 
 // Connection timeout in seconds
 static constexpr uint32_t CONNECT_TIMEOUT_MS = 10000;
+
+// Timeout applied to the NEXT connect attempt. Manual pairing keeps the full 10s;
+// auto-reconnect uses a short value so a failed attempt (keyboard absent) releases
+// the radio quickly — without this, steady 5s polling holds the radio ~2/3 of the
+// time while disconnected (heavy drain + ADC noise). A present keyboard connects in <2s.
+static uint32_t nextConnectTimeoutMs = CONNECT_TIMEOUT_MS;
+static constexpr uint32_t RECONNECT_CONNECT_TIMEOUT_MS = 3500;
 
 // Hard ceiling for the whole connect task (connect + auth + service discovery).
 // Normal worst case is ~17s (10s connect + 5s auth + discovery); past 30s we assume
@@ -400,7 +409,7 @@ static void bleConnectTask(void* param) {
     pClient = NimBLEDevice::createClient();
     pClient->setClientCallbacks(&clientCallbacks, false);
   }
-  pClient->setConnectTimeout(CONNECT_TIMEOUT_MS);
+  pClient->setConnectTimeout(nextConnectTimeoutMs);
 
   // Step 1: Connect (blocks this task, main loop continues)
   NimBLEAddress addr(keyboardAddress, keyboardAddressType);
@@ -791,6 +800,7 @@ void bleLoop() {
         int idx = reconnectKeyboardIndex % count;
         keyboardAddress = nvs_loadAddr(idx);
         keyboardAddressType = nvs_loadType(idx);
+        nextConnectTimeoutMs = RECONNECT_CONNECT_TIMEOUT_MS;  // release radio fast if absent
         connectToKeyboard = true;
         lastReconnectAttempt = now;
         DBG_PRINTF("[BLE] Auto-reconnect: trying keyboard %d/%d (%s)\n",
@@ -899,6 +909,7 @@ void connectToDevice(int deviceIndex) {
 
   keyboardAddress = discoveredDevices[deviceIndex].address;
   keyboardAddressType = discoveredDevices[deviceIndex].addressType;
+  nextConnectTimeoutMs = CONNECT_TIMEOUT_MS;   // user-initiated pairing: allow full time
   connectToKeyboard = true;
 
   DBG_PRINTF("[BLE] Will connect to: %s type=%d (%s)\n",
@@ -994,6 +1005,7 @@ void connectToPairedKeyboard(int index) {
   prefs.putUChar("last_kb", (uint8_t)index);
   reconnectKeyboardIndex = (count > 1) ? (index + 1) % count : 0;
   reconnectDelay = 5000;
+  nextConnectTimeoutMs = CONNECT_TIMEOUT_MS;   // user-initiated: allow full time
   connectToKeyboard = true;
   DBG_PRINTF("[BLE] Switching to paired keyboard %d: %s\n", index, keyboardAddress.c_str());
   writeBleBackup();

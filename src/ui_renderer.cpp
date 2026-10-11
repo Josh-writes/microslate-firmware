@@ -71,6 +71,8 @@ extern Orientation currentOrientation;
 extern int charsPerLine;
 extern char renameBuffer[];
 extern int renameBufferLen;
+extern bool editorFindMode;
+extern char findBuffer[];
 
 void rendererSetup(GfxRenderer& renderer) {
   renderer.insertFont(FONT_LARGE, ns16Family);
@@ -406,6 +408,19 @@ static int drawEditorHeader(GfxRenderer& renderer, HalGPIO& gpio, int sw, bool t
   return 38;
 }
 
+// Bottom overlay bar showing the current find query. Drawn over the editor while
+// find mode is active (the matched text itself highlights via the selection).
+static void drawFindBar(GfxRenderer& renderer, int sw, int sh, bool tc) {
+  int barH = renderer.getLineHeight(FONT_UI) + 10;
+  int barY = sh - barH;
+  clippedFillRect(renderer, 0, barY, sw, barH, !tc);   // clear to background
+  clippedLine(renderer, 0, barY, sw, barY, tc);        // top divider
+  char line[72];
+  snprintf(line, sizeof(line), "Find: %s", findBuffer);
+  drawClippedText(renderer, FONT_UI, 8, barY + 5, line, sw - 100, tc);
+  drawRightText(renderer, FONT_SMALL, sw - 8, barY + 7, "Enter:Next Esc:Close", tc);
+}
+
 void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
   renderer.clearScreen();
   int sw = renderer.getScreenWidth();
@@ -438,6 +453,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
 
     editorSetVisibleLines(1);
 
+    if (editorFindMode) drawFindBar(renderer, sw, sh, tc);
     renderer.beginRefresh(HalDisplay::FAST_REFRESH);
     return;
   }
@@ -480,6 +496,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
       drawEditorCursor(renderer, cursorY, lineHeight, sw, tc);
     }
 
+    if (editorFindMode) drawFindBar(renderer, sw, sh, tc);
     renderer.beginRefresh(HalDisplay::FAST_REFRESH);
     return;
   }
@@ -507,6 +524,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
     drawEditorCursor(renderer, cursorY, lineHeight, sw, tc);
   }
 
+  if (editorFindMode) drawFindBar(renderer, sw, sh, tc);
   renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
 

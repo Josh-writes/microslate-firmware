@@ -446,6 +446,32 @@ void editorPaste() {
   editorInsertText(clipboard);  // bounds-checked; no-op if it would overflow
 }
 
+bool editorFindNext(const char* query) {
+  if (!query || query[0] == '\0' || textLength == 0) return false;
+  int qlen = (int)strlen(query);
+  if (qlen > (int)textLength) return false;
+
+  // Search forward from the caret, then wrap to the start. Plain byte compare is
+  // UTF-8 safe: the query's bytes only match a whole character's bytes in the buffer.
+  int from = cursorPosition;
+  int match = -1;
+  for (int i = from; i + qlen <= (int)textLength; i++) {
+    if (memcmp(textBuffer + i, query, qlen) == 0) { match = i; break; }
+  }
+  if (match < 0) {
+    for (int i = 0; i + qlen <= from && i + qlen <= (int)textLength; i++) {
+      if (memcmp(textBuffer + i, query, qlen) == 0) { match = i; break; }
+    }
+  }
+  if (match < 0) return false;
+
+  selectionAnchor = match;             // highlight the hit via the selection renderer
+  cursorPosition = match + qlen;       // caret past the match so Enter finds the next
+  editorRecalculateLines();
+  ensureCursorVisible(storedVisibleLines);
+  return true;
+}
+
 void editorSetCharsPerLine(int cpl) {
   if (cpl != charsPerLine) {
     charsPerLine = cpl;

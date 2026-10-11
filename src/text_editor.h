@@ -38,6 +38,11 @@ void editorCopy();
 void editorCut();
 void editorPaste();
 
+// Find the next occurrence of `query` (plain byte match, UTF-8 safe) starting
+// from the cursor, wrapping to the top. On a hit, selects the match and scrolls
+// to it; returns true. No match (or empty query) returns false and changes nothing.
+bool editorFindNext(const char* query);
+
 // Line/viewport management
 void editorSetCharsPerLine(int cpl);
 void editorSetVisibleLines(int n);   // Tell editor how many lines are visible on screen

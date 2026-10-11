@@ -57,6 +57,7 @@ struct KeyEvent {
 // --- File Info ---
 static constexpr int MAX_FILENAME_LEN = 64;
 static constexpr int MAX_TITLE_LEN = 40;
+static constexpr int MAX_FIND_LEN = 48;   // in-document find query
 
 struct FileInfo {
   char filename[MAX_FILENAME_LEN];

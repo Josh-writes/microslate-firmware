@@ -61,6 +61,9 @@ extern int charsPerLine;
 extern bool screenDirty;
 extern char renameBuffer[];
 extern int renameBufferLen;
+extern bool editorFindMode;
+extern char findBuffer[];
+extern int findBufferLen;
 
 void inputSetup() {
   queueHead = 0;
@@ -103,8 +106,46 @@ char hidToAscii(uint8_t hid, uint8_t modifiers) {
   return text[0];
 }
 
+// Handle the in-document find overlay. Enter searches / finds next, Esc closes,
+// Backspace edits the query, printable keys extend it.
+static void handleFindKey(uint8_t keyCode, uint8_t modifiers) {
+  if (keyCode == HID_KEY_ESCAPE) {
+    editorFindMode = false;
+    screenDirty = true;
+    return;
+  }
+  if (keyCode == HID_KEY_ENTER) {
+    if (findBufferLen > 0) editorFindNext(findBuffer);
+    screenDirty = true;
+    return;
+  }
+  if (keyCode == HID_KEY_BACKSPACE) {
+    if (findBufferLen > 0) {
+      findBufferLen--;
+      findBuffer[findBufferLen] = '\0';
+    }
+    screenDirty = true;
+    return;
+  }
+  const char* text = keyboardLayoutText(currentKeyboardLayout, keyCode, modifiers, capsLockOn);
+  if (text != nullptr) {
+    int tlen = (int)strlen(text);
+    if (findBufferLen + tlen < MAX_FIND_LEN) {
+      strcpy(findBuffer + findBufferLen, text);
+      findBufferLen += tlen;
+    }
+    screenDirty = true;
+  }
+}
+
 // Handle text editor input
 static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
+  // Find overlay takes over input while active.
+  if (editorFindMode) {
+    handleFindKey(keyCode, modifiers);
+    return;
+  }
+
   // Ctrl shortcuts
   if (isCtrl(modifiers) && !isAltGr(modifiers)) {
     if (keyCode == HID_KEY_S) {
@@ -127,8 +168,11 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
       return;
     }
     if (keyCode == HID_KEY_F) {
-      int v = static_cast<int>(fontSize);
-      fontSize = static_cast<FontSize>((v + 1) % 3);
+      // Enter find mode. (Font size moved here historically; it stays available
+      // in Settings → Font Size.)
+      editorFindMode = true;
+      findBuffer[0] = '\0';
+      findBufferLen = 0;
       screenDirty = true;
       return;
     }

@@ -60,6 +60,11 @@ bool btShowAllDevices = true;    // Bluetooth scan: show ALL devices by default 
 char renameBuffer[MAX_FILENAME_LEN] = "";
 int renameBufferLen = 0;
 
+// In-document find (overlay within the text editor)
+bool editorFindMode = false;
+char findBuffer[MAX_FIND_LEN] = "";
+int findBufferLen = 0;
+
 // UI mode flags
 bool darkMode = false;
 bool cleanMode = false;

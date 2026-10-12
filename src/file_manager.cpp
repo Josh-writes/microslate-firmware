@@ -80,8 +80,56 @@ void fileManagerSetup() {
     SdMan.mkdir("/notes");
   }
 
+  recoverTempFiles();   // reconcile any .tmp left by a crash mid-save
+
   DBG_PRINTLN("SD Card initialized");
   refreshFileList();
+}
+
+void recoverTempFiles() {
+  if (!SdMan.exists("/notes")) return;
+  auto root = SdMan.open("/notes");
+  if (!root || !root.isDirectory()) { if (root) root.close(); return; }
+
+  // Collect .tmp names first — renaming/removing during directory iteration is unsafe.
+  char tmpNames[16][MAX_FILENAME_LEN + 8];
+  int n = 0;
+  root.rewindDirectory();
+  char name[256];
+  for (auto f = root.openNextFile(); f; f = root.openNextFile()) {
+    f.getName(name, sizeof(name));
+    int len = (int)strlen(name);
+    if (len > 4 && strcasecmp(name + len - 4, ".tmp") == 0 && n < 16) {
+      strncpy(tmpNames[n], name, sizeof(tmpNames[0]) - 1);
+      tmpNames[n][sizeof(tmpNames[0]) - 1] = '\0';
+      n++;
+    }
+    f.close();
+  }
+  root.close();
+
+  for (int i = 0; i < n; i++) {
+    char real[MAX_FILENAME_LEN + 8];
+    strncpy(real, tmpNames[i], sizeof(real) - 1);
+    real[sizeof(real) - 1] = '\0';
+    int rl = (int)strlen(real);
+    if (rl > 4) real[rl - 4] = '\0';   // strip ".tmp"
+
+    char tmpPath[320], realPath[320];
+    snprintf(tmpPath, sizeof(tmpPath), "/notes/%s", tmpNames[i]);
+    snprintf(realPath, sizeof(realPath), "/notes/%s", real);
+
+    if (SdMan.exists(realPath)) {
+      // Original intact → the .tmp is a stale partial from a crash before the swap.
+      SdMan.remove(tmpPath);
+      DBG_PRINTF("[recover] removed stale %s\n", tmpNames[i]);
+    } else {
+      // Original missing → crash between rotate and rename; the verified .tmp is the
+      // newest good content. Promote it (previous version is still in .bak as backup).
+      SdMan.rename(tmpPath, realPath);
+      DBG_PRINTF("[recover] promoted %s -> %s\n", tmpNames[i], real);
+    }
+  }
 }
 
 void refreshFileList() {

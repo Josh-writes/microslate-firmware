@@ -15,6 +15,9 @@ static int selectionAnchor = -1;
 static char clipboard[TEXT_BUFFER_SIZE];
 static size_t clipboardLen = 0;
 
+// Set when a newline is inserted; consumed by the autosave (paragraph-break flush).
+static bool paragraphBreakPending = false;
+
 // --- File metadata ---
 static char currentFile[MAX_FILENAME_LEN] = "";
 static char currentTitle[MAX_TITLE_LEN] = "Untitled";
@@ -244,6 +247,7 @@ void editorInsertChar(char c) {
 
 void editorInsertText(const char* text) {
   if (!text || text[0] == '\0') return;
+  if (strchr(text, '\n')) paragraphBreakPending = true;  // flag paragraph breaks for autosave
   // Typing over a selection replaces it.
   if (editorHasSelection()) {
     int lo, hi;
@@ -471,6 +475,9 @@ bool editorFindNext(const char* query) {
   ensureCursorVisible(storedVisibleLines);
   return true;
 }
+
+bool editorHasParagraphBreakPending() { return paragraphBreakPending; }
+void editorClearParagraphBreak() { paragraphBreakPending = false; }
 
 void editorSetCharsPerLine(int cpl) {
   if (cpl != charsPerLine) {

@@ -43,6 +43,11 @@ void editorPaste();
 // to it; returns true. No match (or empty query) returns false and changes nothing.
 bool editorFindNext(const char* query);
 
+// Set when a newline is inserted (a paragraph break) — used by the autosave to
+// flush at natural boundaries. Peek with Has…, clear when a save consumes it.
+bool editorHasParagraphBreakPending();
+void editorClearParagraphBreak();
+
 // Line/viewport management
 void editorSetCharsPerLine(int cpl);
 void editorSetVisibleLines(int n);   // Tell editor how many lines are visible on screen

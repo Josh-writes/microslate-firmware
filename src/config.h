@@ -66,8 +66,9 @@ struct FileInfo {
 };
 
 // --- Auto-save timing ---
-static constexpr unsigned long AUTO_SAVE_IDLE_MS = 10000;    // Save after 10s of no keystrokes
-static constexpr unsigned long AUTO_SAVE_MAX_MS  = 120000;   // Hard cap: save every 2min during continuous typing
+static constexpr unsigned long AUTO_SAVE_IDLE_MS     = 10000;  // Save after 10s of no keystrokes
+static constexpr unsigned long AUTO_SAVE_MAX_MS      = 60000;  // Hard cap during continuous typing (shrinks crash loss window)
+static constexpr unsigned long AUTO_SAVE_PARA_MIN_MS = 3000;   // Also save on a paragraph break, at most this often
 
 // --- OTA App Detection ---
 static constexpr int MAX_OTA_APPS = 4;

@@ -696,8 +696,13 @@ void loop() {
     bool idleTrigger = (now - lastInputTime) > AUTO_SAVE_IDLE_MS
                     && (now - lastAutoSaveMs) > AUTO_SAVE_IDLE_MS;
     bool capTrigger  = (now - lastAutoSaveMs) > AUTO_SAVE_MAX_MS;
-    if (idleTrigger || capTrigger) {
+    // Flush at paragraph breaks (newline), rate-limited so holding Enter / fast
+    // paragraphs don't hammer the SD. Shrinks the worst-case crash loss to a line.
+    bool paraTrigger = editorHasParagraphBreakPending()
+                    && (now - lastAutoSaveMs) > AUTO_SAVE_PARA_MIN_MS;
+    if (idleTrigger || capTrigger || paraTrigger) {
       lastAutoSaveMs = now;
+      editorClearParagraphBreak();
       saveCurrentFile(false);  // Skip refreshFileList — file list unchanged by content update
     }
   }

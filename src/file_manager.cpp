@@ -2,7 +2,10 @@
 #include "text_editor.h"
 #include <Arduino.h>
 #include <SDCardManager.h>
+#include <Preferences.h>
 #include <cstring>
+#include <ctime>
+#include <sys/time.h>
 
 // --- File list ---
 static FileInfo fileList[MAX_FILES];
@@ -10,6 +13,43 @@ static int fileCount = 0;
 
 // Shared state
 extern UIState currentState;
+
+// --- Monotonic clock for file timestamps ---------------------------------
+// The X4 has no RTC, so without this every file would get SdFat's identical
+// default stamp and the browser couldn't tell new notes from old. We keep a
+// coarse clock seeded from a persisted epoch that only ever moves forward:
+// every save stamps the file with time(nullptr) and persists it, so after a
+// reboot the clock resumes just past the last save. That makes each newly
+// saved note strictly newer than everything before it — enough to sort by.
+static Preferences clockPrefs;
+// Seed is a pure relative-ordering sentinel (no UI shows dates). It must sit
+// ABOVE any plausible firmware build date, because legacy notes written by
+// older builds carry that build's compile-date stamp (~2026) — if the seed
+// were lower, those old files would outrank fresh saves and stick to the top.
+static constexpr unsigned long CLOCK_DEFAULT_EPOCH = 1900000000UL;  // ~2030-03
+
+// SdFat calls this whenever it creates or syncs a file's directory entry.
+static void sdDateTimeCallback(uint16_t* date, uint16_t* timeOut) {
+  time_t now = time(nullptr);
+  struct tm t;
+  localtime_r(&now, &t);
+  *date = FS_DATE(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
+  *timeOut = FS_TIME(t.tm_hour, t.tm_min, t.tm_sec);
+}
+
+static void clockInit() {
+  clockPrefs.begin("clock", false);
+  unsigned long base = clockPrefs.getULong("base", CLOCK_DEFAULT_EPOCH);
+  if (base < CLOCK_DEFAULT_EPOCH) base = CLOCK_DEFAULT_EPOCH;
+  struct timeval tv = { (time_t)base, 0 };
+  settimeofday(&tv, nullptr);
+  FsDateTime::setCallback(sdDateTimeCallback);
+}
+
+// Persist the advancing clock so timestamps stay monotonic across reboots.
+static void clockPersist() {
+  clockPrefs.putULong("base", (unsigned long)time(nullptr));
+}
 
 // Convert filename to a readable display title.
 // "my_note_2.txt" -> "My Note 2"
@@ -75,6 +115,8 @@ void fileManagerSetup() {
     DBG_PRINTLN("SD Card mount failed!");
     return;
   }
+
+  clockInit();          // seed monotonic clock + register SdFat timestamp callback
 
   if (!SdMan.exists("/notes")) {
     SdMan.mkdir("/notes");
@@ -158,13 +200,29 @@ void refreshFileList() {
       fileList[fileCount].filename[MAX_FILENAME_LEN - 1] = '\0';
 
       filenameToTitle(name, fileList[fileCount].title, MAX_TITLE_LEN);
-      fileList[fileCount].modTime = 0;
+
+      // Pack the FAT modify date/time into a single comparable key (date is
+      // the high half so it dominates the ordering).
+      uint16_t d = 0, t = 0;
+      file.getModifyDateTime(&d, &t);
+      fileList[fileCount].modTime = ((unsigned long)d << 16) | t;
       fileCount++;
     }
     file.close();
   }
   root.close();
   SdMan.sleep();
+
+  // Sort newest-first (insertion sort — MAX_FILES is small).
+  for (int i = 1; i < fileCount; i++) {
+    FileInfo key = fileList[i];
+    int j = i - 1;
+    while (j >= 0 && fileList[j].modTime < key.modTime) {
+      fileList[j + 1] = fileList[j];
+      j--;
+    }
+    fileList[j + 1] = key;
+  }
 
   DBG_PRINTF("File listing: %d files found\n", fileCount);
 }
@@ -239,6 +297,7 @@ void saveCurrentFile(bool refreshList) {
   SdMan.rename(tmpPath, path);
 
   editorSetUnsavedChanges(false);
+  clockPersist();   // keep timestamps monotonic across reboots
   if (refreshList) refreshFileList();
   SdMan.sleep();
   DBG_PRINTF("Saved: %s\n", filename);

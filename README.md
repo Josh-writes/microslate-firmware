@@ -12,9 +12,14 @@ A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with an
   - *Scroll* — standard scrolling editor (default)
   - *Typewriter* — shows only the current line centered on a blank screen. Focused, distraction-free single-line writing
   - *Pagination* — page-based display instead of scrolling. Clean page flips instead of per-line scroll refreshes
-- **Auto-Save** — content is silently saved to SD card after 10 seconds of idle or every 2 minutes during continuous typing; no manual save required. Every exit path (back button, Esc, power button, sleep, restart) also saves automatically
+- **Auto-Save** — content is silently saved to SD card after 10 seconds of idle, every 60 seconds during continuous typing, and at each paragraph break (at most once every 3 seconds); no manual save required. Every exit path (back button, Esc, power button, sleep, restart) also saves automatically
 - **Safe Writes** — saves use a write-verify + `.bak` rotation pattern; a failed or interrupted write never destroys the previous version. Orphaned files from a crash are recovered automatically on next boot
 - **Clean Mode** — hides all UI chrome while editing so only your text is on screen (Ctrl+Z to toggle)
+- **Find** — Ctrl+F opens a find bar at the bottom of the editor. Enter jumps to the next match (wraps around), Esc closes it
+- **Clipboard** — select text with Shift+arrows, Shift+Home/End, or Ctrl+A, then copy, cut, and paste with Ctrl+C, Ctrl+X, and Ctrl+V
+- **Keyboard Layouts** — US QWERTY, Russian (ЙЦУКЕН), and German (QWERTZ). Choose one in Settings, or press Ctrl+K in the editor to cycle; the active layout shows in the header
+- **Word Count** — Ctrl+W toggles a word count in the editor
+- **Newest-First Browser** — notes are sorted by when they were last saved, newest at the top. The device has no clock, so it keeps its own monotonic timestamp across reboots
 - **Dark Mode** — inverted display
 - **Display Orientation** — portrait, landscape, and inverted variants
 - **Power Management** — ESP-IDF light sleep between loop iterations (CPU drops to 10MHz), BLE modem sleep keeps the radio alive, SD card sleeps between accesses, display analog circuits power down after each refresh, and the device enters deep sleep after 5 minutes of inactivity
@@ -101,9 +106,16 @@ When delete is pending, the footer shows `Delete? Enter:Yes  Esc:No`. Press Ente
 | Key | Action |
 |-----|--------|
 | Arrow keys | Move cursor |
+| Shift + Arrow keys | Extend selection |
 | Home / End | Start / end of line |
-| Backspace / Delete | Remove characters |
+| Shift + Home / End | Extend selection to start / end of line |
+| Backspace / Delete | Remove characters (or the selection) |
 | Tab | Cycle writing mode (Scroll → Typewriter → Pagination) |
+| Ctrl+A | Select all |
+| Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
+| Ctrl+F | Find (Enter = next match, Esc = close) |
+| Ctrl+K | Cycle keyboard layout (US QWERTY → Russian → German) |
+| Ctrl+W | Toggle word count |
 | Ctrl+S | Save manually |
 | Ctrl+N | Edit note title |
 | Ctrl+Z | Toggle clean mode (hides UI chrome) |
@@ -112,9 +124,9 @@ When delete is pending, the footer shows `Delete? Enter:Yes  Esc:No`. Press Ente
 | Ctrl+Left / Right | Jump pages (Pagination mode only) |
 | Esc / Back button | Save and return to file browser |
 
-The current writing mode is shown in the header: **[S]** Scroll, **[T]** Typewriter, **[P]** Pagination.
+The current writing mode is shown in the header: **[S]** Scroll, **[T]** Typewriter, **[P]** Pagination. When a non-QWERTY layout is active, its short name (RU or DE) appears in the header too.
 
-Auto-save runs silently after 10 seconds of idle or every 2 minutes during continuous typing — Ctrl+S is only needed if you want to save immediately.
+Auto-save runs silently after 10 seconds of idle, every 60 seconds during continuous typing, and at paragraph breaks — Ctrl+S is only needed if you want to save immediately.
 
 ### Writing Modes
 
@@ -144,6 +156,9 @@ Navigate with all four direction buttons (or Up/Down on keyboard). Press Enter (
 | Orientation | Portrait, Landscape CW, Inverted, Landscape CCW |
 | Dark Mode | Light / Dark |
 | Writing Mode | Normal, Typewriter, Pagination |
+| Font Size | Adjustable in place |
+| Keyboard Layout | US QWERTY, Russian (ЙЦУКЕН), German (QWERTZ) |
+| BLE Power | −9 (default), −3, 0, +3, +9 dBm. Higher steps give weak or distant keyboards more signal margin, at a battery cost. Leave it at −9 unless a keyboard drops out |
 | Bluetooth | Opens Bluetooth scan to pair a new keyboard |
 | Paired Keyboards | Manage saved keyboards (connect, forget, disconnect) |
 
@@ -158,6 +173,7 @@ Shows all keyboards saved on the device (up to 4). The currently active keyboard
 | Up / Down | Navigate list |
 | Enter | Switch to selected keyboard |
 | D | Forget selected keyboard (removes pairing) |
+| Right (physical button) | Forget selected keyboard; press Enter to confirm, or move the selection to cancel |
 | Left | Disconnect selected keyboard (if currently active) |
 | Esc | Back to Settings |
 
@@ -173,7 +189,7 @@ To pair a second keyboard, go to **Settings → Bluetooth**, scan, and connect. 
 | Left | Disconnect current keyboard |
 | Esc | Back to Settings |
 
-A scan runs for 5 seconds and then stops. Up to 10 nearby devices are shown with name, address, and signal strength.
+A scan runs for 5 seconds and then stops. Up to 10 nearby devices are shown with name, address, and signal strength. By default the list shows every nearby device; use the inline keyboards-only toggle to hide devices that don't look like keyboards. If a keyboard drops out, the device retries the connection about every 5 seconds, so it reconnects soon after the keyboard comes back.
 
 ### WiFi Sync
 

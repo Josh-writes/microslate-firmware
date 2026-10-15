@@ -287,6 +287,18 @@ xteink-writer-firmware/
 
 ---
 
+## Credits
+
+MicroSlate v2.1 includes work from the community. Thank you to the people who wrote these changes:
+
+- **[m-danya](https://github.com/m-danya)** — selectable keyboard layouts (English, Russian, German). From their fork: [m-danya/microslate-firmware](https://github.com/m-danya/microslate-firmware)
+- **[nonexistent9](https://github.com/nonexistent9)** — stability work: task watchdog, BLE reconnect hardening (keeps bonds and recovers a wedged connect task), the arduino-esp32 2.0.17 watchdog fix, and a fork-friendly CI build. From their fork: [nonexistent9/microslate-firmware](https://github.com/nonexistent9/microslate-firmware)
+- **[lucidstack](https://github.com/lucidstack)** — fix for the reboot when pairing a new keyboard, caused by SD and display contention on the shared SPI bus. From their fork: [lucidstack/microslate-firmware](https://github.com/lucidstack/microslate-firmware)
+
+The dual-boot build includes **[CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader)**, the open-source e-reader firmware, and its [website](https://crosspointreader.com). Thank you to the CrossPoint team.
+
+---
+
 ## More from TypeSlate
 
 MicroSlate is the hardware companion to **TypeSlate** — a free, full-screen distraction-free writing app for Windows. Same idea, different form factor: open it, write, close it.

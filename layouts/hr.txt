@@ -1,0 +1,54 @@
+# MicroSlate keyboard layout: Hrvatski
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/hr, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 10 character(s) the MicroSlate fonts cannot show were left out.
+name = Hrvatski
+short = HR
+base = us
+
+GRAVE = ` ~ ¬ ¬
+1 = 1 ! ~ dead:~
+2 = 2 " dead:ˇ
+3 = 3 # ^ dead:^
+4 = 4 $ dead:˘
+5 = 5 % ° dead:°
+6 = 6 & dead:˛
+7 = 7 / ` dead:`
+8 = 8 ( dead:˙
+9 = 9 ) dead:´ '
+0 = 0 = dead:˝
+MINUS = ' ? dead:¨ ¨
+EQUAL = + * dead:¸ ¸
+Q = none none \\
+W = none none | Ł
+E = none none € €
+R = none none ¶ ®
+T = none none ŧ Ŧ
+Y = none none none ¥
+I = none none none ı
+O = none none ø Ø
+P = none none þ Þ
+LBRACKET = none none ÷ dead:°
+RBRACKET = none none × dead:¯
+A = none none æ Æ
+S = none none „ »
+D = none none ” «
+F = none none [ ª
+G = none none ] Ŋ
+H = none none ħ Ħ
+K = none none ł &
+L = none none ł Ł
+SEMICOLON = none none dead:´ dead:˝
+APOSTROPHE = none none ß dead:ˇ
+BACKSLASH = none none ¤ dead:˘
+HASH = none none ¤ dead:˘
+Z = none none ‘ »
+X = none none ’ «
+C = none none ¢ ©
+V = none none @ `
+B = none none { '
+N = none none } ´
+M = none none § º
+COMMA = , ; < ×
+DOT = . : > ÷
+SLASH = - _ none dead:˙

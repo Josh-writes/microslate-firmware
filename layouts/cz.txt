@@ -1,0 +1,56 @@
+# MicroSlate keyboard layout: Čeština (QWERTZ)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/cz, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 6 character(s) the MicroSlate fonts cannot show were left out.
+name = Čeština (QWERTZ)
+short = CZ
+base = us
+
+GRAVE = ; dead:° ` ~
+1 = + 1 ! dead:~
+2 = ě 2 @ dead:ˇ
+3 = š 3 # dead:^
+4 = č 4 $ dead:˘
+5 = ř 5 % dead:°
+6 = ž 6 ^ dead:˛
+7 = ý 7 & dead:`
+8 = á 8 * dead:˙
+9 = í 9 { dead:´
+0 = é 0 } dead:˝
+MINUS = = % \\ dead:¨
+EQUAL = dead:´ dead:ˇ dead:¯ dead:¸
+Q = q Q \\
+W = w W | §
+E = e E € E
+R = r R ¶ ®
+T = t T ŧ Ŧ
+Y = z Z none ¥
+I = i I none ı
+O = o O ø Ø
+P = p P þ Þ
+LBRACKET = ú / [ ÷
+RBRACKET = ) ( ] ×
+A = a A ~ Æ
+S = s S đ
+D = d D Đ Ð
+F = f F [ ª
+G = g G ] Ŋ
+H = h H ` Ħ
+J = j J '
+K = k K ł &
+L = l L Ł Ł
+SEMICOLON = ů " $ dead:˝
+APOSTROPHE = § ! ' ß
+BACKSLASH = dead:¨ ' \\ |
+HASH = dead:¨ ' \\ |
+ISO_BACKSLASH = \\ | /
+Z = y Y ° <
+X = x X # >
+C = c C & ©
+V = v V @ ‚
+B = b B { ‘
+N = n N } ’
+M = m M ^ º
+COMMA = , ? < ×
+DOT = . : > ÷
+SLASH = - _ * dead:˙

@@ -1,0 +1,53 @@
+# MicroSlate keyboard layout: Suomi
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/fi, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 5 character(s) the MicroSlate fonts cannot show were left out.
+name = Suomi
+short = FI
+base = us
+
+GRAVE = § ½
+1 = 1 ! none ¡
+2 = 2 " @ ”
+3 = 3 # £ »
+4 = 4 ¤ $ «
+5 = 5 % ‰ “
+6 = 6 & ‚ „
+7 = 7 / {
+8 = 8 ( [ <
+9 = 9 ) ] >
+0 = 0 = } °
+MINUS = + ? \\ ¿
+EQUAL = dead:´ dead:` dead:¸ dead:˛
+Q = q Q q Q
+W = w W w W
+E = e E €
+R = r R r R
+T = t T þ Þ
+Y = y Y y Y
+U = u U u U
+I = i I ı |
+O = o O œ Œ
+LBRACKET = å Å dead:˝ dead:°
+RBRACKET = dead:¨ dead:^ dead:~ dead:¯
+S = s S ß
+D = d D ð Ð
+F = f F f F
+G = g G g G
+H = h H h H
+J = j J j J
+K = k K ĸ
+SEMICOLON = ö Ö ø Ø
+APOSTROPHE = ä Ä æ Æ
+BACKSLASH = ' * dead:ˇ dead:˘
+HASH = ' * dead:ˇ dead:˘
+ISO_BACKSLASH = < > |
+X = x X × ·
+C = c C c C
+V = v V v V
+B = b B b B
+N = n N ŋ Ŋ
+M = m M µ —
+COMMA = , ; ’ ‘
+DOT = . : none dead:˙
+SLASH = - _ –

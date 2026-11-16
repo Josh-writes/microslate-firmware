@@ -1,0 +1,54 @@
+# MicroSlate keyboard layout: Norsk
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/no, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 10 character(s) the MicroSlate fonts cannot show were left out.
+name = Norsk
+short = NO
+base = us
+
+GRAVE = | § ¦ ¶
+1 = 1 ! ¡ ¹
+2 = 2 " @ ²
+3 = 3 # £ ³
+4 = 4 ¤ $ ¼
+5 = 5 % ½ ‰
+6 = 6 & ¥
+7 = 7 / { ÷
+8 = 8 ( [ «
+9 = 9 ) ] »
+0 = 0 = } °
+MINUS = + ? ± ¿
+EQUAL = \\ dead:` dead:´ ¬
+Q = q Q @
+W = w W ſ §
+E = e E € ¢
+R = r R ®
+T = t T þ Þ
+Y = y Y none ¥
+I = i I none ı
+O = o O œ Œ
+LBRACKET = å Å dead:¨ dead:°
+RBRACKET = dead:¨ dead:^ dead:~ dead:ˇ
+A = a A ª º
+S = s S ß
+D = d D ð Ð
+F = f F đ ª
+G = g G ŋ Ŋ
+H = h H ħ Ħ
+K = k K ĸ &
+L = l L ł Ł
+SEMICOLON = ø Ø dead:´ dead:˝
+APOSTROPHE = æ Æ dead:^ dead:ˇ
+BACKSLASH = ' * dead:˝ ×
+HASH = ' * dead:˝ ×
+ISO_BACKSLASH = < > ½ ¾
+Z = z Z « <
+X = x X » >
+C = c C © ©
+V = v V „ ‚
+B = b B “ ‘
+N = n N ” ’
+M = m M µ º
+COMMA = , ; dead:¸ dead:˛
+DOT = . : … ·
+SLASH = - _ – —

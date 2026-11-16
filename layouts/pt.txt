@@ -1,0 +1,55 @@
+# MicroSlate keyboard layout: Português
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/pt, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 11 character(s) the MicroSlate fonts cannot show were left out.
+name = Português
+short = PT
+base = us
+
+GRAVE = \\ | ¬ ¬
+1 = 1 ! ¹ ¡
+2 = 2 " @
+3 = 3 # £ £
+4 = 4 $ § $
+5 = 5 % ½
+6 = 6 & ¬
+7 = 7 / {
+8 = 8 ( [
+9 = 9 ) ] ±
+0 = 0 = } °
+MINUS = ' ? \\ ¿
+EQUAL = « » dead:¸ dead:˛
+Q = q Q @
+W = w W ſ §
+E = e E € ¢
+R = r R ¶ ®
+T = t T ŧ Ŧ
+Y = y Y none ¥
+I = i I none ı
+O = o O ø Ø
+P = p P þ Þ
+LBRACKET = + * dead:¨ dead:°
+RBRACKET = dead:´ dead:` dead:~ dead:¯
+A = a A æ Æ
+S = s S ß
+D = d D ð Ð
+F = f F đ ª
+G = g G ŋ Ŋ
+H = h H ħ Ħ
+K = k K ĸ &
+L = l L ł Ł
+SEMICOLON = ç Ç dead:´ dead:˝
+APOSTROPHE = º ª dead:^ dead:ˇ
+BACKSLASH = dead:~ dead:^ dead:` dead:˘
+HASH = dead:~ dead:^ dead:` dead:˘
+ISO_BACKSLASH = < > \\ \\
+Z = z Z « <
+X = x X » >
+C = c C ¢ ©
+V = v V „ ‚
+B = b B “ ‘
+N = n N ” ’
+M = m M µ º
+COMMA = , ; • ×
+DOT = . : · ÷
+SLASH = - _ none dead:˙

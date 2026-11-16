@@ -1,0 +1,54 @@
+# MicroSlate keyboard layout: Español
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/es, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 11 character(s) the MicroSlate fonts cannot show were left out.
+name = Español
+short = ES
+base = us
+
+GRAVE = º ª \\ \\
+1 = 1 ! | ¡
+2 = 2 " @
+3 = 3 · # £
+4 = 4 $ ~ $
+5 = 5 % ½
+6 = 6 & ¬
+7 = 7 / {
+8 = 8 ( [
+9 = 9 ) ] ±
+0 = 0 = } °
+MINUS = ' ? \\ ¿
+EQUAL = ¡ ¿ dead:¸ dead:˛
+Q = q Q @
+W = w W ſ §
+E = e E € ¢
+R = r R ¶ ®
+T = t T ŧ Ŧ
+Y = y Y none ¥
+I = i I none ı
+O = o O ø Ø
+P = p P þ Þ
+LBRACKET = dead:` dead:^ [ dead:ˇ
+RBRACKET = + * ] dead:¯
+A = a A æ Æ
+S = s S ß
+D = d D ð Ð
+F = f F đ ª
+G = g G ŋ Ŋ
+H = h H ħ Ħ
+K = k K ĸ &
+L = l L ł Ł
+SEMICOLON = ñ Ñ dead:~ dead:°
+APOSTROPHE = dead:´ dead:¨ { dead:˝
+BACKSLASH = ç Ç } dead:˘
+HASH = ç Ç } dead:˘
+Z = z Z « <
+X = x X » >
+C = c C ¢ ©
+V = v V „ ‚
+B = b B “ ‘
+N = n N ” ’
+M = m M µ º
+COMMA = , ; • ×
+DOT = . : · ÷
+SLASH = - _ none dead:˙

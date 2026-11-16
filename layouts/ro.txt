@@ -1,0 +1,36 @@
+# MicroSlate keyboard layout: Română (standard)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/ro(std), MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 1 character(s) the MicroSlate fonts cannot show were left out.
+name = Română (standard)
+short = RO
+base = us
+
+GRAVE = „ ” ` ~
+1 = 1 ! dead:~
+2 = 2 @ dead:ˇ
+3 = 3 # dead:^
+4 = 4 $ dead:˘
+5 = 5 % dead:°
+6 = 6 ^ dead:˛
+7 = 7 & dead:`
+8 = 8 * dead:˙
+9 = 9 ( dead:´
+0 = 0 ) dead:˝
+MINUS = - _ dead:¨ –
+EQUAL = = + dead:¸ ±
+E = e E €
+P = p P §
+LBRACKET = ă Ă [ {
+RBRACKET = î Î ] }
+S = s S ß
+D = d D đ Đ
+L = l L ł Ł
+SEMICOLON = ș Ș ; :
+APOSTROPHE = ț Ț ' "
+BACKSLASH = â Â \\ |
+HASH = â Â \\ |
+ISO_BACKSLASH = \\ |
+C = c C ©
+COMMA = , ; < «
+DOT = . : > »

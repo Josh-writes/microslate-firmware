@@ -1,0 +1,51 @@
+# MicroSlate keyboard layout: Русский (ЙЦУКЕН)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/ru, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 1 character(s) the MicroSlate fonts cannot show were left out.
+name = Русский (ЙЦУКЕН)
+short = RU
+base = us
+
+GRAVE = ё Ё
+2 = 2 "
+3 = 3
+4 = 4 ;
+6 = 6 :
+7 = 7 ?
+8 = 8 * ₽
+Q = й Й
+W = ц Ц
+E = у У
+R = к К
+T = е Е
+Y = н Н
+U = г Г
+I = ш Ш
+O = щ Щ
+P = з З
+LBRACKET = х Х
+RBRACKET = ъ Ъ
+A = ф Ф
+S = ы Ы
+D = в В
+F = а А
+G = п П
+H = р Р
+J = о О
+K = л Л
+L = д Д
+SEMICOLON = ж Ж
+APOSTROPHE = э Э
+BACKSLASH = \\ /
+HASH = \\ /
+ISO_BACKSLASH = / |
+Z = я Я
+X = ч Ч
+C = с С
+V = м М
+B = и И
+N = т Т
+M = ь Ь
+COMMA = б Б
+DOT = ю Ю
+SLASH = . ,

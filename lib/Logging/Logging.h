@@ -1,0 +1,79 @@
+#pragma once
+
+#include <Arduino.h>
+#include <HardwareSerial.h>
+#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+#include <HWCDC.h>
+#endif
+
+#include <string>
+
+/*
+Define ENABLE_SERIAL_LOG to enable logging
+Can be set in platformio.ini build_flags or as a compile definition
+
+Define LOG_LEVEL to control log verbosity:
+0 = ERR only
+1 = ERR + INF
+2 = ERR + INF + DBG
+If not defined, defaults to 0
+
+If you have a legitimate need for raw Serial access (e.g., binary data,
+special formatting), use the underlying logSerial object directly:
+    logSerial.printf("Special case: %d\n", value);
+    logSerial.write(binaryData, length);
+
+The logSerial reference (defined below) points to the real Serial object and
+won't trigger deprecation warnings.
+*/
+
+#ifndef LOG_LEVEL
+#define LOG_LEVEL 0
+#endif
+
+#if defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+static HWCDC& logSerial = Serial;
+#define LOG_SERIAL_HAS_TX_TIMEOUT 1
+#else
+static HardwareSerial& logSerial = Serial;
+#define LOG_SERIAL_HAS_TX_TIMEOUT 0
+#endif
+
+void logPrintf(const char* level, const char* origin, const char* format, ...);
+
+#ifdef ENABLE_SERIAL_LOG
+#if LOG_LEVEL >= 0
+#define LOG_ERR(origin, format, ...) logPrintf("ERR", origin, format "\n", ##__VA_ARGS__)
+#else
+#define LOG_ERR(origin, format, ...)
+#endif
+
+#if LOG_LEVEL >= 1
+#define LOG_INF(origin, format, ...) logPrintf("INF", origin, format "\n", ##__VA_ARGS__)
+#else
+#define LOG_INF(origin, format, ...)
+#endif
+
+#if LOG_LEVEL >= 2
+#define LOG_DBG(origin, format, ...) logPrintf("DBG", origin, format "\n", ##__VA_ARGS__)
+#else
+#define LOG_DBG(origin, format, ...)
+#endif
+#else
+#define LOG_DBG(origin, format, ...)
+#define LOG_ERR(origin, format, ...)
+#define LOG_INF(origin, format, ...)
+#endif
+
+std::string getLastLogs();
+void clearLastLogs();
+// Validates the RTC log state (magic word + logHead range). Returns true if
+// corruption was detected (magic mismatch or logHead out of range), meaning
+// logMessages is untrusted garbage. Callers should call clearLastLogs() when
+// this returns true so getLastLogs() does not dump corrupt data into crash reports.
+bool sanitizeLogHead();
+
+// MicroSlate: CrossPoint redirects `Serial` to a deprecated MySerialImpl proxy here
+// (and never defines it, so raw Serial use fails to link). MicroSlate prints
+// through plain Serial in its own code (DBG_* macros, ble_keyboard, GfxRenderer),
+// so the redirect is removed. The HAL still logs through LOG_* / logSerial.

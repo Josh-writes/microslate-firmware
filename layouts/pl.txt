@@ -1,0 +1,51 @@
+# MicroSlate keyboard layout: Polski (programisty)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/pl, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 19 character(s) the MicroSlate fonts cannot show were left out.
+name = Polski (programisty)
+short = PL
+base = us
+
+GRAVE = ` ~ ¬
+1 = 1 ! none ¡
+2 = 2 @ ² ¿
+3 = 3 # ³ £
+4 = 4 $ ¢ ¼
+5 = 5 % € ‰
+6 = 6 ^ ½
+7 = 7 & §
+8 = 8 * none ¾
+9 = 9 ( « ±
+0 = 0 ) » °
+MINUS = - _ – —
+EQUAL = = + dead:¸ dead:˛
+W = w W œ Œ
+E = e E ę Ę
+R = r R © ®
+T = t T ß
+Y = y Y none ¥
+O = o O ó Ó
+P = p P þ Þ
+LBRACKET = [ { dead:¨ dead:°
+RBRACKET = ] } dead:~ dead:¯
+A = a A ą Ą
+S = s S ś Ś
+D = d D ð Ð
+F = f F æ Æ
+G = g G ŋ Ŋ
+H = h H ’ •
+K = k K …
+L = l L ł Ł
+SEMICOLON = ; : dead:´ dead:˝
+APOSTROPHE = ' " dead:^ dead:ˇ
+BACKSLASH = \\ | dead:` dead:˘
+HASH = \\ | dead:` dead:˘
+Z = z Z ż Ż
+X = x X ź Ź
+C = c C ć Ć
+V = v V „ ‘
+B = b B ” “
+N = n N ń Ń
+COMMA = , < none ×
+DOT = . > none ÷
+SLASH = / ? none dead:˙

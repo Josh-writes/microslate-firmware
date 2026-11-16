@@ -5,24 +5,27 @@
 void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) { fontMap.insert({fontId, font}); }
 
 void GfxRenderer::rotateCoordinates(const int x, const int y, int* rotatedX, int* rotatedY) const {
+  // The usable panel area: the full panel less the inset on each side (setPanelInset()).
+  const int w = HalDisplay::DISPLAY_WIDTH - 2 * insetX;
+  const int h = HalDisplay::DISPLAY_HEIGHT - 2 * insetY;
   switch (orientation) {
     case Portrait: {
       // Logical portrait (480x800) → panel (800x480)
       // Rotation: 90 degrees clockwise
       *rotatedX = y;
-      *rotatedY = HalDisplay::DISPLAY_HEIGHT - 1 - x;
+      *rotatedY = h - 1 - x;
       break;
     }
     case LandscapeClockwise: {
       // Logical landscape (800x480) rotated 180 degrees (swap top/bottom and left/right)
-      *rotatedX = HalDisplay::DISPLAY_WIDTH - 1 - x;
-      *rotatedY = HalDisplay::DISPLAY_HEIGHT - 1 - y;
+      *rotatedX = w - 1 - x;
+      *rotatedY = h - 1 - y;
       break;
     }
     case PortraitInverted: {
       // Logical portrait (480x800) → panel (800x480)
       // Rotation: 90 degrees counter-clockwise
-      *rotatedX = HalDisplay::DISPLAY_WIDTH - 1 - y;
+      *rotatedX = w - 1 - y;
       *rotatedY = x;
       break;
     }
@@ -33,6 +36,8 @@ void GfxRenderer::rotateCoordinates(const int x, const int y, int* rotatedX, int
       break;
     }
   }
+  *rotatedX += insetX;
+  *rotatedY += insetY;
 }
 
 void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
@@ -661,13 +666,13 @@ int GfxRenderer::getScreenWidth() const {
     case Portrait:
     case PortraitInverted:
       // 480px wide in portrait logical coordinates
-      return HalDisplay::DISPLAY_HEIGHT;
+      return HalDisplay::DISPLAY_HEIGHT - 2 * insetY;
     case LandscapeClockwise:
     case LandscapeCounterClockwise:
       // 800px wide in landscape logical coordinates
-      return HalDisplay::DISPLAY_WIDTH;
+      return HalDisplay::DISPLAY_WIDTH - 2 * insetX;
   }
-  return HalDisplay::DISPLAY_HEIGHT;
+  return HalDisplay::DISPLAY_HEIGHT - 2 * insetY;
 }
 
 int GfxRenderer::getScreenHeight() const {
@@ -675,13 +680,13 @@ int GfxRenderer::getScreenHeight() const {
     case Portrait:
     case PortraitInverted:
       // 800px tall in portrait logical coordinates
-      return HalDisplay::DISPLAY_WIDTH;
+      return HalDisplay::DISPLAY_WIDTH - 2 * insetX;
     case LandscapeClockwise:
     case LandscapeCounterClockwise:
       // 480px tall in landscape logical coordinates
-      return HalDisplay::DISPLAY_HEIGHT;
+      return HalDisplay::DISPLAY_HEIGHT - 2 * insetY;
   }
-  return HalDisplay::DISPLAY_WIDTH;
+  return HalDisplay::DISPLAY_WIDTH - 2 * insetX;
 }
 
 int GfxRenderer::getSpaceWidth(const int fontId) const {

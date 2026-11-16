@@ -1,0 +1,57 @@
+# MicroSlate keyboard layout: Colemak (US)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/us(colemak), MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 1 character(s) the MicroSlate fonts cannot show were left out.
+name = Colemak (US)
+short = CM
+base = us
+
+GRAVE = ` ~ dead:~ ~
+1 = 1 ! ¡ ¹
+2 = 2 @ º ²
+3 = 3 # ª ³
+4 = 4 $ ¢ £
+5 = 5 % € ¥
+6 = 6 ^ ħ Ħ
+7 = 7 & ð Ð
+8 = 8 * þ Þ
+9 = 9 ( ‘ “
+0 = 0 ) ’ ”
+MINUS = - _ – —
+EQUAL = = + × ÷
+Q = q Q ä Ä
+W = w W å Å
+E = f F ã Ã
+R = p P ø Ø
+T = g G dead:˛ ~
+Y = j J đ Đ
+U = l L ł Ł
+I = u U ú Ú
+O = y Y ü Ü
+P = ; : ö Ö
+LBRACKET = [ { « ‹
+RBRACKET = ] } » ›
+A = a A á Á
+S = r R dead:` ~
+D = s S ß
+F = t T dead:´ dead:˝
+G = d D dead:¨ ~
+H = h H dead:ˇ ~
+J = n N ñ Ñ
+K = e E é É
+L = i I í Í
+SEMICOLON = o O ó Ó
+APOSTROPHE = ' " õ Õ
+BACKSLASH = \\ | ~ ~
+HASH = \\ | ~ ~
+ISO_BACKSLASH = - _ – —
+Z = z Z æ Æ
+X = x X dead:^ ~
+C = c C ç Ç
+V = v V œ Œ
+B = b B dead:˘ ~
+N = k K dead:° ~
+M = m M dead:¯ ~
+COMMA = , < dead:¸ ~
+DOT = . > dead:˙ ~
+SLASH = / ? ¿ ~

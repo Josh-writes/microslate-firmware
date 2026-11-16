@@ -36,6 +36,9 @@ intervals = [
     ### Latin Extended-A ###
     # Eastern European and Baltic languages
     (0x0100, 0x017F),
+    ### Latin Extended-B (Romanian subset) ###
+    # S and T with comma below: Ș ș Ț ț
+    (0x0218, 0x021B),
     ### General Punctuation (core subset) ###
     # Smart quotes, en dash, em dash, ellipsis, NO-BREAK SPACE
     (0x2000, 0x206F),

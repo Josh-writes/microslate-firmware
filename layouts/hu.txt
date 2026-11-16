@@ -1,0 +1,57 @@
+# MicroSlate keyboard layout: Magyar (QWERTZ)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/hu, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 9 character(s) the MicroSlate fonts cannot show were left out.
+name = Magyar (QWERTZ)
+short = HU
+base = us
+
+GRAVE = 0 § ¬ ¬
+1 = 1 ' ~ dead:~
+2 = 2 " dead:ˇ
+3 = 3 + ^ dead:^
+4 = 4 ! dead:˘
+5 = 5 % dead:° °
+6 = 6 / dead:˛
+7 = 7 = ` dead:`
+8 = 8 ( dead:˙
+9 = 9 ) dead:´ ´
+0 = ö Ö dead:˝
+MINUS = ü Ü dead:¨ ¨
+EQUAL = ó Ó dead:¸ ¸
+Q = q Q \\
+W = w W | §
+E = e E Ä E
+R = r R ¶ ®
+T = t T ŧ Ŧ
+Y = z Z – ¥
+U = u U €
+I = i I Í í
+O = o O „ Ø
+P = p P ” Þ
+LBRACKET = ő Ő ÷ dead:°
+RBRACKET = ú Ú × dead:¯
+A = a A ä Ä
+S = s S đ
+D = d D Đ Ð
+F = f F [ ª
+G = g G ] Ŋ
+H = h H ħ Ħ
+J = j J í Í
+K = k K ł &
+L = l L Ł Ł
+SEMICOLON = é É $ ¢
+APOSTROPHE = á Á ß
+BACKSLASH = ű Ű ¤ dead:˘
+HASH = ű Ű ¤ dead:˘
+ISO_BACKSLASH = í Í < >
+Z = y Y > <
+X = x X # >
+C = c C & ©
+V = v V @ ‚
+B = b B { ‘
+N = n N } ’
+M = m M < º
+COMMA = , ? ; ×
+DOT = . : > ÷
+SLASH = - _ * dead:˙

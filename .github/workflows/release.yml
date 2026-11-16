@@ -1,5 +1,9 @@
 name: Build and Release
 
+# On a v* tag: builds the release firmware for each v3 device, attaches it to a GitHub release and copies the
+# browser-installer files to typeslate.com (tools/microslate/firmware/v3/). The Xteink X4 and X3 stay on v2.1 for
+# now, so this does not build them and does not touch the website's X4 download or the dual-boot image.
+
 on:
   push:
     tags:
@@ -11,17 +15,37 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - env: sticky_release
+            device: sticky
+          - env: xteink_x4pro
+            device: x4pro
+          - env: e1001_release
+            device: e1001
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Devices compare their MS_FIRMWARE_VERSION with the latest release tag (Settings > Wi-Fi > Firmware update):
+      # a tag that does not match the code would offer the same firmware as an update again and again.
+      - name: Version matches the tag
+        run: |
+          if ! grep -q "#define MS_FIRMWARE_VERSION \"${GITHUB_REF_NAME#v}\"" src/config.h; then
+            echo "::error::tag $GITHUB_REF_NAME does not match MS_FIRMWARE_VERSION in src/config.h"
+            exit 1
+          fi
 
       - uses: actions/cache@v4
         with:
           path: |
             ~/.platformio
-            .pio/build
-          key: pio-${{ hashFiles('platformio.ini', 'sdkconfig.defaults') }}
-          restore-keys: pio-
+            .pio/build/${{ matrix.env }}
+          key: pio-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ matrix.env }}-
 
       - uses: actions/setup-python@v5
         with:
@@ -30,63 +54,84 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
-      - name: Build firmware
-        run: pio run
-
-      - name: Merge binaries
+      # Google Drive's device client ID and secret ship in the firmware (Google treats a device client's
+      # secret as non-confidential) but stay out of the public repository, so they come from repo secrets.
+      - name: Google Drive credentials
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.MS_GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.MS_GOOGLE_CLIENT_SECRET }}
         run: |
-          pip install esptool
-          BOOT_APP0=$(find ~/.platformio -name "boot_app0.bin" | head -1)
-
-          esptool.py --chip esp32c3 merge_bin \
-            --flash_mode dio --flash_size 16MB \
-            -o microslate-${{ github.ref_name }}.bin \
-            0x0     .pio/build/xteink_x4/bootloader.bin \
-            0x8000  .pio/build/xteink_x4/partitions.bin \
-            0xe000  "$BOOT_APP0" \
-            0x10000 .pio/build/xteink_x4/firmware.bin
-
-          if curl -f -o crosspoint-app.bin https://typeslate.com/tools/crosspoint/firmware/app.bin; then
-            esptool.py --chip esp32c3 merge_bin \
-              --flash_mode dio --flash_size 16MB \
-              -o dualboot-${{ github.ref_name }}.bin \
-              0x0      .pio/build/xteink_x4/bootloader.bin \
-              0x8000   .pio/build/xteink_x4/partitions.bin \
-              0xe000   "$BOOT_APP0" \
-              0x10000  crosspoint-app.bin \
-              0x650000 .pio/build/xteink_x4/firmware.bin
-            echo "DUALBOOT_BUILT=true" >> $GITHUB_ENV
-          else
-            echo "CrossPoint app.bin not on website yet, skipping dual-boot build"
-            echo "DUALBOOT_BUILT=false" >> $GITHUB_ENV
+          if [ -z "$GOOGLE_CLIENT_ID" ] || [ -z "$GOOGLE_CLIENT_SECRET" ]; then
+            echo "::error::MS_GOOGLE_CLIENT_ID / MS_GOOGLE_CLIENT_SECRET repo secrets are missing"
+            exit 1
           fi
+          {
+            echo '#pragma once'
+            echo "#define MS_GOOGLE_CLIENT_ID \"$GOOGLE_CLIENT_ID\""
+            echo "#define MS_GOOGLE_CLIENT_SECRET \"$GOOGLE_CLIENT_SECRET\""
+          } > src/sync/secrets.local.h
+
+      # The browser installer writes the bootloader, partition table, boot_app0 (resets otadata to the first app
+      # slot) and the app as separate parts, so the NVS settings between them survive (the merged factory image
+      # would blank them).
+      - name: Build firmware
+        run: |
+          pio run -e ${{ matrix.env }}
+          cp .pio/build/${{ matrix.env }}/firmware.bin microslate-${{ matrix.device }}-${{ github.ref_name }}.bin
+          mkdir -p web/${{ matrix.device }}
+          cp .pio/build/${{ matrix.env }}/{bootloader,partitions,firmware}.bin web/${{ matrix.device }}/
+          cp "$(find ~/.platformio/packages -path '*arduinoespressif32*/tools/partitions/boot_app0.bin' | head -1)" \
+             web/${{ matrix.device }}/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.device }}
+          path: microslate-${{ matrix.device }}-${{ github.ref_name }}.bin
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-${{ matrix.device }}
+          path: web
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            microslate-${{ github.ref_name }}.bin
-            dualboot-${{ github.ref_name }}.bin
-          fail_on_unmatched_files: false
+          files: microslate-*-${{ github.ref_name }}.bin
+          fail_on_unmatched_files: true
           generate_release_notes: true
 
-      - name: Update firmware on typeslate website
+  website:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: web-*
+          path: web
+          merge-multiple: true
+
+      - name: Copy the installer files to typeslate.com
         env:
           WEBSITE_PAT: ${{ secrets.WEBSITE_PAT }}
         run: |
-          git clone https://x-access-token:${WEBSITE_PAT}@github.com/josh-websites/typeslate-website.git website
-          cp microslate-${{ github.ref_name }}.bin website/tools/microslate/firmware/latest.bin
-          echo '{"version":"${{ github.ref_name }}"}' > website/tools/microslate/firmware/version.json
-
-          if [ "$DUALBOOT_BUILT" = "true" ]; then
-            cp dualboot-${{ github.ref_name }}.bin website/tools/microslate/firmware/dualboot-latest.bin
-            echo '{"version":"${{ github.ref_name }}"}' > website/tools/microslate/firmware/dualboot-version.json
-            git -C website add tools/microslate/firmware/dualboot-latest.bin tools/microslate/firmware/dualboot-version.json
-          fi
-
+          git clone --depth 1 https://x-access-token:${WEBSITE_PAT}@github.com/josh-websites/typeslate-website.git website
+          dest=website/tools/microslate/firmware/v3
+          rm -rf "$dest" && mkdir -p "$dest"
+          cp -r web/* "$dest"/
+          echo '{"version":"${{ github.ref_name }}"}' > "$dest"/version.json
           cd website
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add tools/microslate/firmware/latest.bin tools/microslate/firmware/version.json
-          git commit -m "Update MicroSlate firmware to ${{ github.ref_name }}"
+          git add tools/microslate/firmware/v3
+          git commit -m "MicroSlate ${{ github.ref_name }} installer files (Sticky, E1001, X4 Pro)"
           git push

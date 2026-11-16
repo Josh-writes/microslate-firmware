@@ -1,0 +1,4 @@
+[submodule "freeink-sdk"]
+	path = freeink-sdk
+	url = https://github.com/Josh-writes/freeink-sdk.git
+	branch = microslate-e1001

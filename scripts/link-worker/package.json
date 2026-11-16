@@ -1,0 +1,13 @@
+{
+  "name": "microslate-link",
+  "private": true,
+  "description": "Sign-in relay for MicroSlate (Dropbox): a Cloudflare Worker with one Durable Object per sign-in",
+  "scripts": {
+    "dev": "wrangler dev --local --port 8787 --var KEEP_MS:3000",
+    "test": "node test.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.152.0"
+  }
+}

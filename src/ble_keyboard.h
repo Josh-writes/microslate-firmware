@@ -9,7 +9,6 @@ struct BleDeviceInfo {
   std::string name;
   int rssi;
   uint8_t addressType;    // BLE address type (public/random)
-  uint32_t lastSeenMs;    // from millis()
   bool isHid = false;     // advertises the HID service (0x1812)
   uint16_t appearance = 0; // BLE appearance (0x03C1 = keyboard), 0 if not advertised
 };
@@ -30,6 +29,7 @@ int getVisibleDeviceIndices(bool showAll, int* idxOut, int maxOut,
 void bleSetup();
 void bleLoop();
 bool isKeyboardConnected();
+uint8_t bleHeldModifiers();   // Shift/Ctrl/Alt/Win bits held now (from the last report)
 BLEState getConnectionState();
 
 // Functions for Bluetooth device management
@@ -50,14 +50,13 @@ static constexpr int MAX_PAIRED_KEYBOARDS = 4;
 // Multi-keyboard storage API
 int  getPairedKeyboardCount();
 bool getPairedKeyboard(int index, std::string& addr, std::string& name, uint8_t& addrType);
+bool pairedKeyboardNeedsRepair(int index);   // the keyboard refused its pairing: put it in pairing mode
 int  getLastUsedKeyboardIndex();   // -1 if none stored
 bool removePairedKeyboard(int index);
 void connectToPairedKeyboard(int index);
 
-// Internal helpers (also used by ui_renderer for backwards compat)
-void storePairedDevice(const std::string& address, const std::string& name);
+// The last-used keyboard (the Bluetooth screen shows it while it reconnects)
 bool getStoredDevice(std::string& address, std::string& name);
-void clearStoredDevice();
 
 // Function for getting current passkey for UI display
 uint32_t getCurrentPasskey();
@@ -65,13 +64,9 @@ uint32_t getCurrentPasskey();
 // BLE transmit power (dBm). Default -9 (lowest step, best battery life). Higher
 // steps improve link margin for weak/distant keyboards at a continuous battery
 // cost. Cycles through discrete steps; persisted in NVS. Pure BLE — portable.
-int8_t      getBleTxPower();
 const char* getBleTxPowerLabel();  // e.g. "-9 dBm (Battery)" for the settings UI
 void        cycleBleTxPower(int dir);  // dir>=0: more power, dir<0: less
 
 // Bluetooth scanning status functions
 bool isDeviceScanning();
-uint32_t getScanAgeMs();
-void refreshScanNow();
-void clearAllBluetoothBonds();
 void cancelPendingConnection();

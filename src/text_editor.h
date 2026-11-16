@@ -12,10 +12,13 @@ size_t editorGetLength();
 int editorGetCursorPosition();
 
 // Editing operations
-void editorInsertChar(char c);
 void editorInsertText(const char* text);
 void editorDeleteChar();     // Backspace
 void editorDeleteForward();  // Delete key
+// Undo/redo (edit_history.h): typing goes back a word at a time; paste, cut and typing over a selection one step each.
+// False when there is nothing to undo or redo.
+bool editorUndo();
+bool editorRedo();
 
 // Cursor movement. extend=true keeps an anchor so the range between the anchor
 // and the cursor becomes the selection (Shift+arrow). extend=false collapses an
@@ -28,12 +31,26 @@ void editorMoveCursorDown(bool extend = false);
 void editorMoveCursorHome(bool extend = false);
 void editorMoveCursorEnd(bool extend = false);
 
+// Touch/pointer positioning. SetCursorPosition puts the cursor at a byte offset
+// (snapped to a UTF-8 boundary); extend=true keeps/arms the selection anchor.
+// SelectWordAt selects the word under the offset (false if there is none).
+// ScrollViewport scrolls the visible lines without moving the cursor.
+void editorSetCursorPosition(int pos, bool extend = false);
+bool editorSelectWordAt(int pos);
+// GetWordBounds: the [lo, hi) byte range of the word under the offset (or just
+// before it); false when there is none. SelectRange sets an exact selection with
+// the cursor at `cursor` (anchor and cursor may be in either order).
+bool editorGetWordBounds(int pos, int* lo, int* hi);
+void editorSelectRange(int anchor, int cursor);
+void editorScrollViewport(int deltaLines);
+
 // Selection + clipboard. Selection is empty when anchor == cursor; the range is a
 // half-open byte interval [lo, hi) on character boundaries. The clipboard is
 // internal to the device and survives opening/creating another note.
 void editorSelectAll();
 bool editorHasSelection();
 bool editorGetSelectionRange(int* lo, int* hi);
+bool editorHasClipboard();
 void editorCopy();
 void editorCut();
 void editorPaste();
@@ -48,15 +65,18 @@ bool editorFindNext(const char* query);
 bool editorHasParagraphBreakPending();
 void editorClearParagraphBreak();
 
+// True for a few seconds after a key or paste was refused because the note is full (the header says "Note full").
+bool editorNoteFullShowing();
+
 // Line/viewport management
 void editorSetCharsPerLine(int cpl);
+// Wrap by pixel width (per-ASCII advance table); maxPx 0 falls back to charsPerLine
+void editorSetPixelWrap(int maxPx, const uint16_t* w128, int fallback);
 void editorSetVisibleLines(int n);   // Tell editor how many lines are visible on screen
 int editorGetStoredVisibleLines();   // Get the last set visible lines count
 void editorRecalculateLines();
-int editorGetVisibleLines(int lineHeight, int textAreaHeight);
 int editorGetViewportStart();
 int editorGetCursorLine();
-int editorGetCursorCol();
 int editorGetLineCount();
 int editorGetLinePosition(int lineIndex);
 

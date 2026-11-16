@@ -1,0 +1,55 @@
+# MicroSlate keyboard layout: Български
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/bg, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 5 character(s) the MicroSlate fonts cannot show were left out.
+name = Български
+short = BG
+base = us
+
+GRAVE = ( ) [ ]
+2 = 2 ?
+3 = 3 + † †
+4 = 4 "
+6 = 6 = — —
+7 = 7 : … …
+8 = 8 / ̀ ́
+9 = 9 –
+0 = 0
+MINUS = - $ ‑ €
+EQUAL = . €
+Q = , ы ’ ‘
+W = у У
+E = е Е э Э
+R = и И ѝ Ѝ
+T = ш Ш
+Y = щ Щ
+U = к К © ©
+I = с С © ©
+O = д Д
+P = з З
+LBRACKET = ц Ц
+RBRACKET = ; §
+A = ь ѝ ы Ы
+S = я Я ѣ Ѣ
+D = а А
+F = о О
+G = ж Ж
+H = г Г
+J = т Т
+K = н Н
+L = в В
+SEMICOLON = м М
+APOSTROPHE = ч Ч
+BACKSLASH = „ “ « »
+HASH = „ “ « »
+ISO_BACKSLASH = ѝ Ѝ
+Z = ю Ю
+X = й Й ѭ Ѭ
+C = ъ Ъ ѫ Ѫ
+V = э Э
+B = ф Ф
+N = х Х
+M = п П
+COMMA = р Р ® ®
+DOT = л Л
+SLASH = б Б

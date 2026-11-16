@@ -1,0 +1,14 @@
+{
+  // MicroSlate sign-in relay. Deploy with: npx wrangler deploy   (see README.md)
+  "name": "microslate-link",
+  "main": "worker.js",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [{ "name": "LINK", "class_name": "LinkSession" }]
+  },
+  // The free plan only offers SQLite-backed Durable Objects.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LinkSession"] }],
+  "observability": { "enabled": false }
+}

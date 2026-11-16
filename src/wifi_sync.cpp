@@ -1,17 +1,17 @@
+#include "diag/mem_diag.h"
 #include "wifi_sync.h"
 #include "config.h"
 #include "file_manager.h"
+#include "input_handler.h"
 #include "sd_backup.h"
+#include "sync/cloud_service.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WebServer.h>
-#include <ESPmDNS.h>
 #include <SDCardManager.h>
 #include <Preferences.h>
 
 // --- Internal state ---
-static WebServer* server = nullptr;
 static bool syncActive = false;
 static SyncState syncState = SyncState::SCANNING;
 static char statusText[64] = "";
@@ -49,67 +49,19 @@ static unsigned long connectStartMs = 0;
 static char connectingSSID[33] = "";
 static bool usedSavedPassword = false;
 static bool autoConnectAttempted = false;  // True if we tried auto-connect with saved creds
-
-// --- Sync activity tracking ---
-static int filesSent = 0;       // Files downloaded by PC (GET)
-static int filesReceived = 0;  // Files uploaded by PC (POST)
-static int totalFilesToSync = 0; // Total .txt files on device
-
-static constexpr int MAX_LOG_LINES = 6;
-static char syncLog[MAX_LOG_LINES][48];
-static int syncLogCount = 0;
-
-static bool pcConnected = false;
-
-static unsigned long lastHttpActivityMs = 0;
-static constexpr unsigned long SYNC_TIMEOUT_MS = 60000;  // 60s no HTTP → auto-disconnect
-static bool syncCompletePending = false;  // Set by handler, acted on in wifiSyncLoop
-
-// --- DONE state ---
-static unsigned long doneStartMs = 0;
-static constexpr unsigned long DONE_DISPLAY_MS = 3000;  // 3s before returning to menu
+static bool skipAutoConnectOnce = false;   // the user chose "Other network": show the list, do not auto-connect again
+static bool addMode = false;               // opened from Settings to add a network (wifiAddStart)
+static bool savedLoaded = false;           // the Settings list cache below is current
 
 // --- Forward declarations ---
-static void startHttpServer();
-static void stopHttpServer();
 static void beginScan();
 static void beginConnect(const char* ssid, const char* pass);
 static void enterSyncingState();
-static void enterDoneState();
-static void addSyncLogEntry(const char* fmt, const char* filename);
 
 // =========================================================================
-// Sync log helpers
-// =========================================================================
-
-static void resetSyncTracking() {
-  filesSent = 0;
-  filesReceived = 0;
-  totalFilesToSync = getFileCount();
-  syncLogCount = 0;
-  syncCompletePending = false;
-  pcConnected = false;
-  for (int i = 0; i < MAX_LOG_LINES; i++) syncLog[i][0] = '\0';
-}
-
-int getSyncTotalFiles() { return totalFilesToSync; }
-
-static void addSyncLogEntry(const char* fmt, const char* filename) {
-  // Shift entries up if full
-  if (syncLogCount >= MAX_LOG_LINES) {
-    for (int i = 0; i < MAX_LOG_LINES - 1; i++) {
-      strncpy(syncLog[i], syncLog[i + 1], sizeof(syncLog[i]) - 1);
-      syncLog[i][sizeof(syncLog[i]) - 1] = '\0';
-    }
-    syncLogCount = MAX_LOG_LINES - 1;
-  }
-  snprintf(syncLog[syncLogCount], sizeof(syncLog[syncLogCount]), fmt, filename);
-  syncLogCount++;
-  screenDirty = true;
-}
-
-// =========================================================================
-// SD card backup for WiFi credentials
+// SD card backup of the saved networks: their names only. Passwords stay in NVS (Josh, 2026-11-01): a lost or
+// lent card must not give away the home network. After a wipe the networks come back without passwords; the first
+// join of each asks for it (getSavedPassword says there is none until then).
 // =========================================================================
 
 static constexpr char WIFI_BACKUP_PATH[] = "/microslate/wifi.json";
@@ -123,12 +75,9 @@ static void writeWifiBackup() {
         snprintf(sKey, sizeof(sKey), "wifi_ssid_%d", i);
         snprintf(pKey, sizeof(pKey), "wifi_pass_%d", i);
         String ssid = wifiPrefs.getString(sKey, "");
-        String pass = wifiPrefs.getString(pKey, "");
         char tmp[16];
         snprintf(tmp, sizeof(tmp), ",\"s%d\":\"", i);  strncat(buf, tmp, sizeof(buf) - strlen(buf) - 1);
         jsonAppendStr(buf, sizeof(buf), ssid.c_str());  strncat(buf, "\"", sizeof(buf) - strlen(buf) - 1);
-        snprintf(tmp, sizeof(tmp), ",\"p%d\":\"", i);  strncat(buf, tmp, sizeof(buf) - strlen(buf) - 1);
-        jsonAppendStr(buf, sizeof(buf), pass.c_str());  strncat(buf, "\"", sizeof(buf) - strlen(buf) - 1);
     }
     strncat(buf, "}", sizeof(buf) - strlen(buf) - 1);
     if (!SdMan.exists("/microslate")) SdMan.mkdir("/microslate");
@@ -148,14 +97,26 @@ static void restoreWifiBackup() {
         snprintf(pNvs, sizeof(pNvs), "wifi_pass_%d", i);
         char ssid[64] = "", pass[128] = "";
         jsonGetStr(buf, sKey, ssid, sizeof(ssid));
-        jsonGetStr(buf, pKey, pass, sizeof(pass));
+        const bool hasPass = jsonGetStr(buf, pKey, pass, sizeof(pass));   // only in a backup from before 2026-11
         if (ssid[0]) {
             wifiPrefs.putString(sNvs, ssid);
-            wifiPrefs.putString(pNvs, pass);
+            if (hasPass) wifiPrefs.putString(pNvs, pass);
+            else if (wifiPrefs.isKey(pNvs)) wifiPrefs.remove(pNvs);   // no password yet: asked on the first join
         }
     }
     wifiPrefs.putInt("wifi_count", count);
-    DBG_PRINTF("[SYNC] Restored %d WiFi credential(s) from SD backup\n", count);
+    DBG_PRINTF("[SYNC] Restored %d WiFi network(s) from SD backup\n", count);
+}
+
+// The saved networks: from the card after a wipe; and a backup written before 2026-11 (with passwords) is
+// rewritten with names only.
+static void wifiBackupCheck() {
+    if (!wifiPrefs.isKey("wifi_count")) { restoreWifiBackup(); return; }
+    static char buf[512];
+    if (sdReadFile(WIFI_BACKUP_PATH, buf, sizeof(buf)) && strstr(buf, "\"p0\"")) {
+        writeWifiBackup();
+        DBG_PRINTLN("[WIFI] backup on the card rewritten without passwords");
+    }
 }
 
 // =========================================================================
@@ -187,6 +148,7 @@ static bool getSavedPassword(const char* ssid, char* passBuf, int passBufSize) {
     snprintf(pKey, sizeof(pKey), "wifi_pass_%d", i);
     String savedSSID = wifiPrefs.getString(sKey, "");
     if (savedSSID.length() > 0 && strcmp(savedSSID.c_str(), ssid) == 0) {
+      if (!wifiPrefs.isKey(pKey)) return false;   // restored from the card without its password: ask for it
       String savedPass = wifiPrefs.getString(pKey, "");
       strncpy(passBuf, savedPass.c_str(), passBufSize - 1);
       passBuf[passBufSize - 1] = '\0';
@@ -207,6 +169,7 @@ static void saveCredential(const char* ssid, const char* pass) {
     String savedSSID = wifiPrefs.getString(sKey, "");
     if (savedSSID.length() > 0 && strcmp(savedSSID.c_str(), ssid) == 0) {
       wifiPrefs.putString(pKey, pass);
+      savedLoaded = false;
       return;
     }
   }
@@ -221,6 +184,7 @@ static void saveCredential(const char* ssid, const char* pass) {
   if (count < MAX_SAVED_NETWORKS) {
     wifiPrefs.putInt("wifi_count", count + 1);
   }
+  savedLoaded = false;
   writeWifiBackup();
 }
 
@@ -239,7 +203,8 @@ static void forgetCredential(const char* ssid) {
         snprintf(dstS, sizeof(dstS), "wifi_ssid_%d", j);
         snprintf(dstP, sizeof(dstP), "wifi_pass_%d", j);
         wifiPrefs.putString(dstS, wifiPrefs.getString(srcS, ""));
-        wifiPrefs.putString(dstP, wifiPrefs.getString(srcP, ""));
+        if (wifiPrefs.isKey(srcP)) wifiPrefs.putString(dstP, wifiPrefs.getString(srcP, ""));
+        else if (wifiPrefs.isKey(dstP)) wifiPrefs.remove(dstP);   // a network still waiting for its password
       }
       // Clear last slot
       int lastIdx = count - 1;
@@ -249,6 +214,8 @@ static void forgetCredential(const char* ssid) {
       wifiPrefs.remove(lastS);
       wifiPrefs.remove(lastP);
       wifiPrefs.putInt("wifi_count", count - 1);
+      if (wifiPrefs.getString("wifi_last", "") == ssid) wifiPrefs.remove("wifi_last");
+      savedLoaded = false;
       writeWifiBackup();
       return;
     }
@@ -341,7 +308,9 @@ static void processScanResults() {
   DBG_PRINTF("[SYNC] Found %d networks\n", networkCount);
 
   // Intelligent auto-connect: if the strongest available network is saved, auto-connect
-  if (networkCount > 0 && networks[0].saved) {
+  const bool skipAuto = skipAutoConnectOnce;
+  skipAutoConnectOnce = false;
+  if (!skipAuto && networkCount > 0 && networks[0].saved) {
     char savedPass[MAX_PASSWORD_LEN + 1];
     if (getSavedPassword(networks[0].ssid, savedPass, sizeof(savedPass))) {
       usedSavedPassword = true;
@@ -371,37 +340,27 @@ static void beginConnect(const char* ssid, const char* pass) {
   DBG_PRINTF("[SYNC] Connecting to %s\n", ssid);
 }
 
+// Wi-Fi is up: open the cloud screen (it starts a sync by itself when signed in). The old PC sync over the local
+// network (Python script, /api/files) is retired; Transfer replaces it (2026-10-29).
 static void enterSyncingState() {
-  resetSyncTracking();
-  startHttpServer();
-  snprintf(statusText, sizeof(statusText), "%s",
-           WiFi.localIP().toString().c_str());
-  syncState = SyncState::SYNCING;
-  lastHttpActivityMs = millis();
+  syncState = SyncState::CLOUD;
+  snprintf(statusText, sizeof(statusText), "%s", cloud::providerName());
+  cloud::screenOpen();
   screenDirty = true;
-  DBG_PRINTF("[SYNC] Syncing — server at %s\n", statusText);
-}
-
-static void enterDoneState() {
-  stopHttpServer();
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-
-  syncState = SyncState::DONE;
-  doneStartMs = millis();
-
-  if (filesSent == 0 && filesReceived == 0) {
-    strcpy(statusText, "No changes");
-  } else {
-    snprintf(statusText, sizeof(statusText), "Sent: %d  Received: %d",
-             filesSent, filesReceived);
-  }
-  screenDirty = true;
-  DBG_PRINTF("[SYNC] Done — %s\n", statusText);
 }
 
 static void pollConnection() {
   if (WiFi.status() == WL_CONNECTED) {
+    if (addMode) {
+      // Added from Settings: joining it is the test; save it, make it the one tried first, back to Settings.
+      if (!usedSavedPassword) saveCredential(connectingSSID, passwordBuf);
+      wifiPrefs.putString("wifi_last", connectingSSID);
+      savedLoaded = false;
+      DBG_PRINTF("[WIFI] added %s\n", connectingSSID);
+      wifiSyncStop();
+      return;
+    }
+    if (usedSavedPassword) wifiPrefs.putString("wifi_last", connectingSSID);
     // If we used a manually entered password, prompt to save first
     if (!usedSavedPassword) {
       syncState = SyncState::SAVE_PROMPT;
@@ -414,7 +373,7 @@ static void pollConnection() {
     return;
   }
 
-  if (millis() - connectStartMs > 25000) {
+  if (millis() - connectStartMs > 25000UL) {
     WiFi.disconnect(true);
     strcpy(statusText, "Connection failed");
 
@@ -427,126 +386,6 @@ static void pollConnection() {
     screenDirty = true;
     DBG_PRINTLN("[SYNC] Connection timed out");
   }
-}
-
-// =========================================================================
-// HTTP Server
-// =========================================================================
-
-static void handleFileList() {
-  lastHttpActivityMs = millis();
-  if (!pcConnected) {
-    pcConnected = true;
-    screenDirty = true;
-  }
-
-  auto dir = SdMan.open("/notes");
-  if (!dir || !dir.isDirectory()) {
-    if (dir) dir.close();
-    server->send(500, "application/json", "[]");
-    return;
-  }
-
-  String json = "[";
-  bool first = true;
-  char name[256];
-
-  dir.rewindDirectory();
-  for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
-    file.getName(name, sizeof(name));
-    if (name[0] == '.') { file.close(); continue; }
-
-    int nameLen = strlen(name);
-    if (nameLen > 4 && strcmp(name + nameLen - 4, ".txt") == 0) {
-      if (!first) json += ",";
-      first = false;
-      json += "{\"name\":\"";
-      json += name;
-      json += "\",\"size\":";
-      json += String((unsigned long)file.size());
-      json += "}";
-    }
-    file.close();
-  }
-  dir.close();
-
-  json += "]";
-  server->send(200, "application/json", json);
-}
-
-static void handleFileDownload() {
-  lastHttpActivityMs = millis();
-
-  String uri = server->uri();
-  if (!uri.startsWith("/notes/") || uri.length() <= 7) {
-    server->send(400, "text/plain", "Bad request");
-    return;
-  }
-
-  String filename = uri.substring(7);
-  char path[320];
-  snprintf(path, sizeof(path), "/notes/%s", filename.c_str());
-
-  auto file = SdMan.open(path, O_RDONLY);
-  if (!file) {
-    server->send(404, "text/plain", "Not found");
-    return;
-  }
-
-  size_t fileSize = file.size();
-  server->setContentLength(fileSize);
-  server->send(200, "text/plain", "");
-
-  uint8_t buf[512];
-  while (file.available()) {
-    int bytesRead = file.read(buf, sizeof(buf));
-    if (bytesRead <= 0) break;
-    server->client().write(buf, bytesRead);
-  }
-  file.close();
-
-  // Track: PC downloaded a file from device = "sent"
-  filesSent++;
-  screenDirty = true;
-  DBG_PRINTF("[SYNC] Sent file: %s\n", filename.c_str());
-}
-
-static void handleSyncComplete() {
-  lastHttpActivityMs = millis();
-  server->send(200, "text/plain", "OK");
-  DBG_PRINTLN("[SYNC] PC signaled sync complete");
-  syncCompletePending = true;  // enterDoneState() called from wifiSyncLoop, not here
-}
-
-static void handleNotFound() {
-  String uri = server->uri();
-
-  if (uri.startsWith("/notes/") && uri.length() > 7 && server->method() == HTTP_GET) {
-    handleFileDownload();
-    return;
-  }
-
-  server->send(404, "text/plain", "Not found");
-}
-
-static void startHttpServer() {
-  if (server) return;
-  server = new WebServer(80);
-  server->on("/api/files", HTTP_GET, handleFileList);
-  server->on("/api/sync-complete", HTTP_POST, handleSyncComplete);
-  server->onNotFound(handleNotFound);
-  server->begin();
-  MDNS.begin("microslate");
-  DBG_PRINTF("[SYNC] HTTP server started at %s\n", WiFi.localIP().toString().c_str());
-}
-
-static void stopHttpServer() {
-  if (server) {
-    server->stop();
-    delete server;
-    server = nullptr;
-  }
-  MDNS.end();
 }
 
 // =========================================================================
@@ -611,7 +450,6 @@ void syncHandleKey(uint8_t keyCode, uint8_t modifiers) {
         }
       } else {
         // Printable character — Wi-Fi passwords always use US QWERTY input.
-        extern char hidToAscii(uint8_t hid, uint8_t modifiers);
         char c = hidToAscii(keyCode, modifiers);
         if (c != 0 && c >= ' ' && c != '\n' && c != '\t' && passwordLen < MAX_PASSWORD_LEN) {
           passwordBuf[passwordLen++] = c;
@@ -626,7 +464,8 @@ void syncHandleKey(uint8_t keyCode, uint8_t modifiers) {
       if (keyCode == HID_KEY_ESCAPE) {
         WiFi.disconnect(true);
         if (autoConnectAttempted) {
-          // Was auto-connecting — fall back to scan
+          // Was auto-connecting ("Other network"): show the list without connecting to the saved one again
+          skipAutoConnectOnce = true;
           beginScan();
         } else {
           syncState = SyncState::NETWORK_LIST;
@@ -635,15 +474,8 @@ void syncHandleKey(uint8_t keyCode, uint8_t modifiers) {
       }
       break;
 
-    case SyncState::SYNCING:
-      if (keyCode == HID_KEY_ESCAPE) {
-        wifiSyncStop();
-      }
-      break;
-
-    case SyncState::DONE:
-      // Any key press returns to menu immediately
-      wifiSyncStop();
+    case SyncState::CLOUD:
+      if (cloud::screenKey(keyCode, modifiers)) wifiSyncStop();
       break;
 
     case SyncState::CONNECT_FAILED:
@@ -683,6 +515,173 @@ void syncHandleKey(uint8_t keyCode, uint8_t modifiers) {
 }
 
 // =========================================================================
+// Quick connect to a saved network (no scan, no list) and the no-UI Wi-Fi used by background sync
+// =========================================================================
+
+static constexpr int QUICK_MAX = MAX_SAVED_NETWORKS;
+
+// Saved networks, the last one that worked first.
+static int loadSavedList(Preferences& prefs, char (*ssids)[33], char (*passes)[64]) {
+  const int count = prefs.getInt("wifi_count", 0);
+  String last = prefs.getString("wifi_last", "");
+  int n = 0;
+  auto add = [&](int i) {
+    char sKey[16], pKey[16];
+    snprintf(sKey, sizeof(sKey), "wifi_ssid_%d", i);
+    snprintf(pKey, sizeof(pKey), "wifi_pass_%d", i);
+    String s = prefs.getString(sKey, "");
+    if (s.length() == 0 || n >= QUICK_MAX) return;
+    for (int k = 0; k < n; k++) if (strcmp(ssids[k], s.c_str()) == 0) return;
+    strncpy(ssids[n], s.c_str(), 32);
+    ssids[n][32] = 0;
+    String p = prefs.getString(pKey, "");
+    strncpy(passes[n], p.c_str(), 63);
+    passes[n][63] = 0;
+    n++;
+  };
+  for (int i = 0; i < count && i < MAX_SAVED_NETWORKS; i++) {   // last used first
+    char sKey[16];
+    snprintf(sKey, sizeof(sKey), "wifi_ssid_%d", i);
+    if (last.length() && last == prefs.getString(sKey, "")) add(i);
+  }
+  for (int i = 0; i < count && i < MAX_SAVED_NETWORKS; i++) add(i);
+  return n;
+}
+
+static struct {
+  char ssids[QUICK_MAX][33];
+  char passes[QUICK_MAX][64];
+  int n = 0, idx = 0;
+  unsigned long startMs = 0;
+  bool scanning = false;
+  QuickWifi state = QuickWifi::Idle;
+} quick;
+
+static bool g_wifiHeld = false;      // Transfer is using Wi-Fi
+static bool g_hotspotOn = false;     // Transfer runs the device's own hotspot
+
+void wifiHold(bool on) { g_wifiHeld = on; }
+void wifiSetHotspot(bool on) { g_hotspotOn = on; }
+bool wifiHotspotActive() { return g_hotspotOn; }
+
+static void quickAttempt() {
+  WiFi.disconnect(true);
+  delay(20);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(quick.ssids[quick.idx], quick.passes[quick.idx]);
+  quick.startMs = millis();
+  DBG_PRINTF("[WIFI] quick: trying %s\n", quick.ssids[quick.idx]);
+  memdiag::stagef("Wi-Fi join %d of %d", quick.idx + 1, quick.n);
+}
+
+bool wifiQuickBegin() {
+#if !defined(RELEASE_BUILD)
+  // Why Wi-Fi drops (the 802.11 reason code), so a slow or lost connection shows in the log.
+  static bool eventsOn = false;
+  if (!eventsOn) {
+    eventsOn = true;
+    WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
+      DBG_PRINTF("[WIFI] disconnected, reason %d\n", (int)info.wifi_sta_disconnected.reason);
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  }
+#endif
+  if (g_hotspotOn) return false;
+  if (WiFi.status() == WL_CONNECTED) { quick.state = QuickWifi::Connected; return true; }
+  if (quick.state == QuickWifi::Connecting) return true;   // already looking (sync and Transfer share one attempt)
+  Preferences prefs;
+  if (!prefs.begin("wifi_creds", true)) return false;
+  if (!prefs.isKey("wifi_count")) { prefs.end(); return false; }
+  quick.n = loadSavedList(prefs, quick.ssids, quick.passes);
+  prefs.end();
+  if (quick.n <= 0) return false;
+  quick.idx = 0;
+  quick.state = QuickWifi::Connecting;
+  // Look first: only saved networks that are actually in range are tried (no 10 s wait on one that is not).
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true);
+  WiFi.scanNetworks(true);
+  quick.scanning = true;
+  quick.startMs = millis();
+  memdiag::stage("Wi-Fi scan");
+  return true;
+}
+
+// The scan finished: keep the saved networks that were seen (the last one that worked stays first).
+static void quickFilterVisible(int found) {
+  int keep = 0;
+  for (int k = 0; k < quick.n; k++) {
+    bool seen = false;
+    for (int i = 0; i < found && !seen; i++) seen = (WiFi.SSID(i) == quick.ssids[k]);
+    if (!seen) continue;
+    if (keep != k) {
+      memcpy(quick.ssids[keep], quick.ssids[k], sizeof(quick.ssids[0]));
+      memcpy(quick.passes[keep], quick.passes[k], sizeof(quick.passes[0]));
+    }
+    keep++;
+  }
+  quick.n = keep;
+}
+
+QuickWifi wifiQuickPoll() {
+  if (quick.state != QuickWifi::Connecting) return quick.state;
+  if (quick.scanning) {
+    // A full scan takes about 9 s where 20 networks are in range and Bluetooth shares the radio
+    // (Sticky and E1001, 2026-10-29); the old 8 s limit cut every scan off at home, so every
+    // background sync failed with "No Wi-Fi".
+    const int found = WiFi.scanComplete();
+    const bool timedOut = millis() - quick.startMs > 20000;
+    if (found == WIFI_SCAN_RUNNING && !timedOut) return quick.state;
+    quick.scanning = false;
+    DBG_PRINTF("[SYNC] Quick scan: %d network(s) in %lu ms%s\n", found > 0 ? found : 0,
+               (unsigned long)(millis() - quick.startMs), timedOut ? " (timed out)" : "");
+    if (found > 0) quickFilterVisible(found); else quick.n = 0;
+    WiFi.scanDelete();
+    if (quick.n <= 0) {
+      DBG_PRINTF("[WIFI] quick: no saved network in range\n");
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      quick.state = QuickWifi::Failed;
+      memdiag::wifiOff();
+      return quick.state;
+    }
+    quick.idx = 0;
+    quickAttempt();
+    return quick.state;
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    quick.state = QuickWifi::Connected;
+    DBG_PRINTF("[WIFI] quick: joined %s after %lu ms, signal %d dBm, channel %d\n", quick.ssids[quick.idx],
+               (unsigned long)(millis() - quick.startMs), (int)WiFi.RSSI(), (int)WiFi.channel());
+    memdiag::stage("Wi-Fi joined");
+    Preferences prefs;
+    if (prefs.begin("wifi_creds", false)) { prefs.putString("wifi_last", quick.ssids[quick.idx]); prefs.end(); }
+    return quick.state;
+  }
+  if (millis() - quick.startMs > 10000) {
+    DBG_PRINTF("[WIFI] quick: %s did not join in 10 s (status %d)\n", quick.ssids[quick.idx], (int)WiFi.status());
+    if (++quick.idx >= quick.n) {
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      quick.state = QuickWifi::Failed;
+      memdiag::wifiOff();
+    } else {
+      quickAttempt();
+    }
+  }
+  return quick.state;
+}
+
+void wifiQuickEnd() {
+  if (g_wifiHeld) return;   // the Transfer screen is serving on this network
+  quick.state = QuickWifi::Idle;
+  quick.scanning = false;
+  if (syncActive) return;   // the Sync screen owns Wi-Fi while it is open
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  memdiag::wifiOff();
+}
+
+// =========================================================================
 // Public API
 // =========================================================================
 
@@ -690,9 +689,17 @@ void wifiSyncStart() {
   if (syncActive) return;
   syncActive = true;
   wifiPrefs.begin("wifi_creds", false);
-  if (!wifiPrefs.isKey("wifi_count")) restoreWifiBackup();
-  resetSyncTracking();
+  wifiBackupCheck();
 
+  // Already connected (a recent background sync left Wi-Fi up): go straight to the OneDrive screen.
+  if (WiFi.status() == WL_CONNECTED) {
+    usedSavedPassword = true;
+    enterSyncingState();
+    return;
+  }
+  // Otherwise scan: the strongest saved network in range is connected to automatically, and the list only shows
+  // when none is (see processScanResults).
+  skipAutoConnectOnce = false;
   beginScan();
 
   DBG_PRINTLN("[SYNC] WiFi sync started");
@@ -700,8 +707,10 @@ void wifiSyncStart() {
 
 void wifiSyncStop() {
   if (!syncActive) return;
+  const bool adding = addMode;
+  addMode = false;
 
-  stopHttpServer();
+  cloud::screenClose();
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
 
@@ -712,9 +721,9 @@ void wifiSyncStop() {
   passwordLen = 0;
   statusText[0] = '\0';
 
-  // Return to main menu
+  // Back where it was opened from: Settings (adding a network) or the main menu
   extern UIState currentState;
-  currentState = UIState::MAIN_MENU;
+  currentState = adding ? UIState::SETTINGS : UIState::MAIN_MENU;
   screenDirty = true;
 
   DBG_PRINTLN("[SYNC] WiFi sync stopped");
@@ -732,22 +741,7 @@ void wifiSyncLoop() {
       pollConnection();
       break;
 
-    case SyncState::SYNCING:
-      if (server) server->handleClient();
-      if (syncCompletePending) {
-        syncCompletePending = false;
-        enterDoneState();
-      } else if (millis() - lastHttpActivityMs > SYNC_TIMEOUT_MS) {
-        DBG_PRINTLN("[SYNC] Timeout — no HTTP activity for 60s");
-        enterDoneState();
-      }
-      break;
-
-    case SyncState::DONE:
-      // Auto-return to menu after 3 seconds
-      if (millis() - doneStartMs > DONE_DISPLAY_MS) {
-        wifiSyncStop();
-      }
+    case SyncState::CLOUD:   // the cloud screen runs from cloud::loop()
       break;
 
     case SyncState::SAVE_PROMPT:
@@ -795,10 +789,6 @@ int getSelectedNetwork() {
   return selectedNet;
 }
 
-const char* getPasswordBuffer() {
-  return passwordBuf;
-}
-
 int getPasswordLen() {
   return passwordLen;
 }
@@ -807,14 +797,94 @@ const char* getSyncStatusText() {
   return statusText;
 }
 
-int getSyncFilesSent() {
-  return filesSent;
+bool wifiAutoConnecting() { return syncActive && syncState == SyncState::CONNECTING && autoConnectAttempted; }
+
+// =========================================================================
+// Saved networks for Settings, and adding one
+// =========================================================================
+
+static struct {
+  char ssid[MAX_SAVED_NETWORKS][33];
+  char last[33];
+  int n = 0;
+} saved;
+
+// Runs f with wifiPrefs open: the Sync screen keeps it open, Settings opens it for the moment.
+template <typename F> static void withWifiPrefs(F f) {
+  const bool wasOpen = syncActive;
+  if (!wasOpen && !wifiPrefs.begin("wifi_creds", false)) return;
+  wifiBackupCheck();
+  f();
+  if (!wasOpen) wifiPrefs.end();
 }
 
-int getSyncFilesReceived() {
-  return filesReceived;
+static void savedLoad() {
+  if (savedLoaded) return;
+  savedLoaded = true;
+  saved.n = 0;
+  saved.last[0] = '\0';
+  withWifiPrefs([] {
+    const int count = wifiPrefs.getInt("wifi_count", 0);
+    for (int i = 0; i < count && i < MAX_SAVED_NETWORKS; i++) {
+      char key[16];
+      snprintf(key, sizeof(key), "wifi_ssid_%d", i);
+      String s = wifiPrefs.getString(key, "");
+      if (s.length() == 0) continue;
+      snprintf(saved.ssid[saved.n++], sizeof(saved.ssid[0]), "%s", s.c_str());
+    }
+    snprintf(saved.last, sizeof(saved.last), "%s", wifiPrefs.getString("wifi_last", "").c_str());
+  });
 }
 
-bool isPcConnected() {
-  return pcConnected;
+void wifiSavedRefresh() { savedLoaded = false; }
+int wifiSavedCount() { savedLoad(); return saved.n; }
+const char* wifiSavedSsid(int i) { savedLoad(); return (i >= 0 && i < saved.n) ? saved.ssid[i] : ""; }
+
+bool wifiSavedPreferred(int i) {
+  savedLoad();
+  if (i < 0 || i >= saved.n) return false;
+  // No choice made yet: the first one is what is tried first.
+  bool lastSaved = false;
+  for (int k = 0; k < saved.n; k++) lastSaved = lastSaved || strcmp(saved.ssid[k], saved.last) == 0;
+  return lastSaved ? strcmp(saved.ssid[i], saved.last) == 0 : i == 0;
 }
+
+bool wifiSavedConnected(int i) {
+  savedLoad();
+  if (i < 0 || i >= saved.n || g_hotspotOn || WiFi.status() != WL_CONNECTED) return false;
+  return WiFi.SSID() == saved.ssid[i];
+}
+
+void wifiSavedPrefer(int i) {
+  savedLoad();
+  if (i < 0 || i >= saved.n) return;
+  char ssid[33];
+  snprintf(ssid, sizeof(ssid), "%s", saved.ssid[i]);
+  withWifiPrefs([&] { wifiPrefs.putString("wifi_last", ssid); });
+  savedLoaded = false;
+}
+
+void wifiSavedForget(int i) {
+  savedLoad();
+  if (i < 0 || i >= saved.n) return;
+  char ssid[33];
+  snprintf(ssid, sizeof(ssid), "%s", saved.ssid[i]);
+  withWifiPrefs([&] { forgetCredential(ssid); });
+  savedLoaded = false;
+  DBG_PRINTF("[WIFI] forgot %s\n", ssid);
+}
+
+void wifiAddStart() {
+  if (syncActive || g_hotspotOn) return;
+  if (cloud::wifiInUse()) cloud::radioTakenOver();   // a background sync gives the radio up; its push runs later
+  syncActive = true;
+  addMode = true;
+  wifiPrefs.begin("wifi_creds", false);
+  wifiBackupCheck();
+  skipAutoConnectOnce = true;   // show the list; the user picks the network to add
+  autoConnectAttempted = false;
+  beginScan();
+  DBG_PRINTLN("[WIFI] add a network");
+}
+
+bool wifiAdding() { return syncActive && addMode; }

@@ -1,0 +1,43 @@
+# MicroSlate keyboard layout: Dvorak (US)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/us(dvorak), MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+name = Dvorak (US)
+short = DV
+base = us
+
+GRAVE = ` ~ dead:` dead:~
+6 = 6 ^ dead:^ dead:^
+9 = 9 ( dead:` dead:˘
+MINUS = [ {
+EQUAL = ] } dead:~
+Q = ' " dead:´ dead:¨
+W = , < dead:¸ dead:ˇ
+E = . > dead:˙ ·
+R = p P
+T = y Y
+Y = f F
+U = g G
+I = c C
+O = r R
+P = l L
+LBRACKET = / ?
+RBRACKET = = +
+S = o O
+D = e E
+F = u U
+G = i I
+H = d D
+J = h H
+K = t T
+L = n N
+SEMICOLON = s S
+APOSTROPHE = - _
+Z = ; : dead:˛ dead:˝
+X = q Q
+C = j J
+V = k K
+B = x X
+N = b B
+COMMA = w W
+DOT = v V
+SLASH = z Z

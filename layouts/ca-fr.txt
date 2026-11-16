@@ -1,0 +1,35 @@
+# MicroSlate keyboard layout: Français (Canada)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/ca, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+name = Français (Canada)
+short = CA
+base = us
+
+GRAVE = # | \\
+1 = 1 ! ±
+2 = 2 " @
+3 = 3 / £
+4 = 4 $ ¢
+5 = 5 % ¤
+6 = 6 ? ¬
+7 = 7 & ¦
+8 = 8 * ²
+9 = 9 ( ³
+0 = 0 ) ¼
+MINUS = - _ ½
+EQUAL = = + ¾
+E = e E €
+Y = y Y ¥
+O = o O §
+P = p P ¶
+LBRACKET = dead:^ dead:^ [
+RBRACKET = dead:¸ dead:¨ ]
+SEMICOLON = ; : ~
+APOSTROPHE = dead:` dead:` {
+BACKSLASH = < > }
+HASH = < > }
+ISO_BACKSLASH = « » °
+M = m M µ
+COMMA = , ' ¯
+DOT = . . ­
+SLASH = é É dead:´

@@ -1,11 +1,17 @@
 #pragma once
 #include <SDCardManager.h>
+#include "sd_safe.h"
+#include <cstdio>
 #include <cstring>
 
-// Read entire file into buf. Returns false if missing or too large.
+// Read entire file into buf. Returns false if missing or too large. A file lost between sdWriteFile's remove and
+// rename is read from its copy (path + ".tmp"), which was complete before the old file was removed.
 static inline bool sdReadFile(const char* path, char* buf, size_t bufSize) {
-    if (!SdMan.exists(path)) return false;
-    auto f = SdMan.open(path, O_RDONLY);
+    char tmp[96];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    const char* from = SdMan.exists(path) ? path : SdMan.exists(tmp) ? tmp : nullptr;
+    if (!from) return false;
+    auto f = SdMan.open(from, O_RDONLY);
     if (!f.isOpen()) return false;
     int n = f.read(buf, (int)(bufSize - 1));
     f.close();
@@ -14,14 +20,9 @@ static inline bool sdReadFile(const char* path, char* buf, size_t bufSize) {
     return true;
 }
 
-// Write string to file (overwrites). Returns false on error.
+// Write a string to a file (replaces it; sdWriteSafely). Returns false on error (the old file is then kept).
 static inline bool sdWriteFile(const char* path, const char* content) {
-    auto f = SdMan.open(path, O_WRONLY | O_CREAT | O_TRUNC);
-    if (!f.isOpen()) return false;
-    size_t len = strlen(content);
-    size_t written = f.write((const uint8_t*)content, len);
-    f.close();
-    return written == len;
+    return sdWriteSafely(path, content, strlen(content));
 }
 
 // Parse an integer value from flat JSON: {"key":42,...}

@@ -1,0 +1,57 @@
+# MicroSlate keyboard layout: US International (accent keys)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/us(intl), MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 1 character(s) the MicroSlate fonts cannot show were left out.
+name = US International (accent keys)
+short = USI
+base = us
+
+GRAVE = dead:` dead:~ ` ~
+1 = 1 ! ¡ ¹
+2 = 2 @ ² dead:˝
+3 = 3 # ³ dead:¯
+4 = 4 $ ¤ £
+5 = 5 % € dead:¸
+6 = 6 dead:^ ¼ ^
+7 = 7 & ½
+8 = 8 * ¾ dead:˛
+9 = 9 ( ‘ dead:˘
+0 = 0 ) ’ dead:°
+MINUS = - _ ¥
+EQUAL = = + × ÷
+Q = q Q ä Ä
+W = w W å Å
+E = e E é É
+R = r R ®
+T = t T þ Þ
+Y = y Y ü Ü
+U = u U ú Ú
+I = i I í Í
+O = o O ó Ó
+P = p P ö Ö
+LBRACKET = [ { « “
+RBRACKET = ] } » ”
+A = a A á Á
+S = s S ß §
+D = d D ð Ð
+F = f F ë Ë
+G = g G g G
+H = h H h H
+J = j J ï Ï
+K = k K œ Œ
+L = l L ø Ø
+SEMICOLON = ; : ¶ °
+APOSTROPHE = dead:´ dead:¨ ' "
+BACKSLASH = \\ | ¬ ¦
+HASH = \\ | ¬ ¦
+ISO_BACKSLASH = \\ | \\ |
+Z = z Z æ Æ
+X = x X ·
+C = c C © ¢
+V = v V v V
+B = b B b B
+N = n N ñ Ñ
+M = m M µ ±
+COMMA = , < ç Ç
+DOT = . > dead:˙ dead:ˇ
+SLASH = / ? ¿

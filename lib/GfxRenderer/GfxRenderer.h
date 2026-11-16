@@ -4,6 +4,7 @@
 #include <HalDisplay.h>
 
 #include <map>
+#include <string>
 
 #include "Bitmap.h"
 
@@ -38,6 +39,8 @@ class GfxRenderer {
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, const int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
   void freeBwBufferChunks();
+  static inline int insetX = 0;
+  static inline int insetY = 0;
   void rotateCoordinates(int x, int y, int* rotatedX, int* rotatedY) const;
   void drawPixelDither(int x, int y, Color color) const;
   void fillArc(int maxRadius, int cx, int cy, int xDir, int yDir, Color color) const;
@@ -54,6 +57,15 @@ class GfxRenderer {
 
   // Setup
   void insertFont(int fontId, EpdFontFamily font);
+
+  // Panel inset, in the panel's native landscape frame: a band the device's case covers (X4 Pro). Drawing moves inside
+  // it and getScreenWidth()/getScreenHeight() shrink to match; 0 everywhere (the default) changes nothing.
+  static void setPanelInset(int leftRight, int topBottom) {
+    insetX = leftRight;
+    insetY = topBottom;
+  }
+  static int panelInsetX() { return insetX; }
+  static int panelInsetY() { return insetY; }
 
   // Orientation control (affects logical width/height and coordinate transforms)
   void setOrientation(const Orientation o) { orientation = o; }

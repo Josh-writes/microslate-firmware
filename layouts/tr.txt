@@ -1,0 +1,49 @@
+# MicroSlate keyboard layout: Türkçe (Q)
+# Generated from the Linux keyboard definitions (xkeyboard-config, symbols/tr, MIT licence).
+# Copy it to /microslate/layouts/ on the SD card, then pick it in Settings > Keyboard layout.
+# 3 character(s) the MicroSlate fonts cannot show were left out.
+name = Türkçe (Q)
+short = TR
+base = us
+
+GRAVE = " é < °
+1 = 1 ! > ¡
+2 = 2 ' £ ²
+3 = 3 ^ # ³
+4 = 4 + $ ¼
+5 = 5 % ½
+6 = 6 & ¾
+7 = 7 / {
+8 = 8 ( [
+9 = 9 ) ] ±
+0 = 0 = } °
+MINUS = * ? \\ ¿
+EQUAL = - _ |
+Q = q Q @
+E = e E €
+R = r R ¶ ®
+T = t T ₺
+Y = y Y none ¥
+U = u U û Û
+I = ı I î Î
+O = o O ô Ô
+LBRACKET = ğ Ğ dead:¨ dead:°
+RBRACKET = ü Ü ~ dead:¯
+A = a A â Â
+S = s S ß
+F = f F ª
+SEMICOLON = ş Ş ´ dead:´
+APOSTROPHE = i İ ' dead:ˇ
+BACKSLASH = , ; ` dead:`
+HASH = , ; ` dead:`
+ISO_BACKSLASH = < > | ¦
+Z = z Z « <
+X = x X » >
+C = c C ¢ ©
+V = v V „ ‚
+B = b B “ ‘
+N = n N ” ’
+M = m M µ º
+COMMA = ö Ö ×
+DOT = ç Ç · ÷
+SLASH = . : dead:˙ dead:˙

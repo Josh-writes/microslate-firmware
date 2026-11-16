@@ -39,7 +39,17 @@ jobs:
           python-version: '3.11'
 
       - name: Install PlatformIO
-        run: pip install platformio
+        run: pip install "platformio==6.1.19" uv
+
+      # The platform bootstraps its own penv with an open-ended "pioarduino>=6.1.19", which now resolves to 6.2.0.
+      # That core wants tool-scons 4.11.1 while platform 55.03.311 pins 4.8.1; the two reinstall over each other and
+      # the build stops with "No module named 'SCons.Tool.FortranCommon'". Keep the penv core on 6.1.19 too
+      # (https://github.com/pioarduino/platform-espressif32/issues/529).
+      - name: Pin the PlatformIO core inside the platform penv
+        run: |
+          pio pkg install -e ${{ matrix.env }}
+          uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
+          ~/.platformio/penv/bin/pio --version
 
       - name: Build firmware
         run: pio run -e ${{ matrix.env }}

@@ -10,7 +10,16 @@ saved to the SD card as plain text files, with optional sync to OneDrive, Dropbo
 | Seeed reTerminal Sticky | **v3**, this branch |
 | Seeed reTerminal E1001 | **v3**, this branch |
 | Xteink X4 Pro | v3, this branch. *Experimental*: built on the FreeInk SDK's X4 Pro support, not yet tested on hardware by us. Feedback welcome. |
-| Xteink X4 and X3 | **v2.1**: the [`v2` branch](https://github.com/Josh-writes/microslate-firmware/tree/v2) and the installer at [typeslate.com/tools/microslate](https://typeslate.com/tools/microslate/). A simplified v3 for them is coming. |
+| Xteink X4 (original) | **v2.1** (see below). A simplified v3 for it is coming. |
+| Xteink X3 | Not supported yet. The simplified v3 for the X4 will also cover the X3. |
+
+> **Original Xteink X4? Use MicroSlate v2.1.** It is still available and supported:
+> - Install it from your browser at [typeslate.com/tools/microslate](https://typeslate.com/tools/microslate/#x4)
+>   (MicroSlate on its own, or the dual-boot edition with the CrossPoint e-reader).
+> - Release files: [v2.1.0](https://github.com/Josh-writes/microslate-firmware/releases/tag/v2.1.0).
+> - Source and its own README: the [`v2.1` branch](https://github.com/Josh-writes/microslate-firmware/tree/v2.1).
+>
+> The v3 files on this page are for the Sticky, E1001 and X4 Pro only. They do not run on the original X4.
 
 **Keyboards:** only Bluetooth LE keyboards work. None of these devices has a Classic Bluetooth radio, so a
 Classic-only keyboard can never connect, whatever the firmware does. "Bluetooth 5.0" on the box is not enough: look for
@@ -42,7 +51,12 @@ BLE, Bluetooth Low Energy, or "works with iPad". Tested on v3 with the Logitech 
 
 ## Install
 
-Back up your device first. Flash **the app only, at 0x10000**, so settings, keyboards and cloud sign-ins survive, and
+These steps are for the Sticky, E1001 and X4 Pro. For the original Xteink X4, see v2.1 above.
+
+The easiest way is the browser installer at [typeslate.com/tools/microslate](https://typeslate.com/tools/microslate/#install)
+(Chrome or Edge): pick your device and click Install. Settings, keyboards and sign-ins are kept.
+
+To flash by hand instead: back up your device first. Flash **the app only, at 0x10000**, so settings, keyboards and cloud sign-ins survive, and
 erase `otadata` so the device starts the app you flashed (after an update over Wi-Fi it may be running from its second
 app slot):
 

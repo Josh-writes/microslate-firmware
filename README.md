@@ -1,5 +1,14 @@
 # MicroSlate
 
+> **This is MicroSlate v2.1, for the original Xteink X4.** It stays available and is still the version to use on that
+> device. Install it from your browser at [typeslate.com/tools/microslate](https://typeslate.com/tools/microslate/#x4)
+> (on its own or as the dual-boot edition with CrossPoint), or use the files from the
+> [v2.1.0 release](https://github.com/Josh-writes/microslate-firmware/releases/tag/v2.1.0).
+>
+> **MicroSlate v3** (Seeed reTerminal Sticky and E1001, Xteink X4 Pro experimental) is on the
+> [`main` branch](https://github.com/Josh-writes/microslate-firmware). It does not run on the original X4 yet; a
+> simplified v3 for the X4 is coming.
+
 A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with any **Bluetooth LE (BLE)** keyboard and saves notes to MicroSD.
 
 ## Features

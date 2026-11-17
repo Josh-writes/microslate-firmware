@@ -101,7 +101,7 @@ void focusStep(int) { cleanMode = !cleanMode; }
 void bluetoothValue(char* out, size_t n) { snprintf(out, n, "%s", isKeyboardConnected() ? "Connected" : "Not connected"); }
 void bluetoothOpen() {
   bluetoothDeviceSelection = 0;
-  btShowAllDevices = true;   // default to showing all (see the note at its definition)
+  btShowAllDevices = false;   // filtered by default (see the note at its definition)
   currentState = UIState::BLUETOOTH_SETTINGS;
 }
 

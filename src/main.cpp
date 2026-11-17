@@ -82,9 +82,9 @@ bool screenDirty = true;
 // The screen shows everything typed so far: no redraw waiting and no refresh running (key
 // repeat paces itself on this).
 bool displayCaughtUp();
-bool btShowAllDevices = true;    // Bluetooth scan: show ALL devices by default (HID classification
-                                 // is unreliable — many keyboards don't advertise HID pre-connect,
-                                 // so hiding would drop them). Toggle can filter to keyboards-only.
+bool btShowAllDevices = false;   // Bluetooth scan: keyboards only by default, else named devices (a crowded office
+                                 // listed dozens of nameless addresses). Some keyboards don't advertise HID before
+                                 // connecting, so the list's last row ("Show other devices") reaches everything.
 
 // Rename buffer
 char renameBuffer[MAX_FILENAME_LEN] = "";
@@ -303,6 +303,9 @@ void setup() {
 
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;
+
+  // No keyboard paired yet (first start, or all forgotten): start on the Bluetooth screen, which scans on entry.
+  if (getPairedKeyboardCount() == 0) currentState = UIState::BLUETOOTH_SETTINGS;
 
   DBG_PRINTLN("MicroSlate ready.");
 
@@ -610,6 +613,34 @@ void loop() {
     autoReconnectEnabled = true;
     if (lastState == UIState::BLUETOOTH_SETTINGS && isDeviceScanning()) {
       stopDeviceScan();
+    }
+  }
+
+  // First pairing (no keyboard stored): the Bluetooth screen keeps searching, and when a search finds exactly one
+  // keyboard it connects without a key press, as soon as the user puts the keyboard in pairing mode. Each keyboard is
+  // tried once per visit, so a refused pairing does not repeat. Two or more keyboards: the list, nearest first, and
+  // the user picks. Once connected, on to the main menu.
+  static bool firstPair = false;
+  static std::string autoTried;
+  if (currentState == UIState::BLUETOOTH_SETTINGS) {
+    if (lastState != UIState::BLUETOOTH_SETTINGS) {
+      firstPair = getPairedKeyboardCount() == 0;
+      autoTried.clear();
+    }
+    if (firstPair && isKeyboardConnected()) {
+      firstPair = false;
+      currentState = UIState::MAIN_MENU;
+      screenDirty = true;
+    } else if (firstPair && !isDeviceScanning() && !bleConnectBusy() && getCurrentPasskey() == 0) {
+      int idx[32], total = 0, kbd = 0, hidden = 0;
+      getVisibleDeviceIndices(false, idx, 32, &total, &kbd, &hidden);
+      if (kbd == 1 && getDiscoveredDevices()[idx[0]].address != autoTried) {
+        autoTried = getDiscoveredDevices()[idx[0]].address;
+        connectToDevice(idx[0]);
+      } else {
+        startDeviceScan(true);   // keep searching; the list stays so the user can pick from it
+      }
+      screenDirty = true;
     }
   }
   lastState = currentState;

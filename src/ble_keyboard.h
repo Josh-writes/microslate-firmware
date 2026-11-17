@@ -19,21 +19,24 @@ struct BleDeviceInfo {
 bool bleDeviceIsLikelyKeyboard(const BleDeviceInfo& d);
 
 // Fills idxOut with indices into the discovered-device array that should be
-// shown. When showAll is false, only likely keyboards are shown — UNLESS none
-// are found, in which case all devices are shown (so the user is never stuck).
-// Reports the total device count and the keyboard count via the out params.
+// shown, best first: likely keyboards, then named devices, then the rest, the
+// strongest signal first within each. When showAll is false, only keyboards are
+// shown; with none, only named devices; with neither, all (never an empty list).
+// Reports the total, the keyboard count and how many devices the filter leaves
+// out (also with showAll, so the caller knows whether a filter toggle is useful).
 // Returns the number of indices written (<= maxOut).
 int getVisibleDeviceIndices(bool showAll, int* idxOut, int maxOut,
-                            int* outTotal, int* outKeyboards);
+                            int* outTotal, int* outKeyboards, int* outHidden);
 
 void bleSetup();
 void bleLoop();
 bool isKeyboardConnected();
+bool bleConnectBusy();        // a connection was asked for or is being made (pairing code included)
 uint8_t bleHeldModifiers();   // Shift/Ctrl/Alt/Win bits held now (from the last report)
 BLEState getConnectionState();
 
 // Functions for Bluetooth device management
-void startDeviceScan();
+void startDeviceScan(bool keepList = false);   // keepList: search again without emptying the list
 void stopDeviceScan();
 int getDiscoveredDeviceCount();
 BleDeviceInfo* getDiscoveredDevices();

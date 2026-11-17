@@ -4,6 +4,7 @@
 #include "sd_backup.h"
 
 #include <HidCore.h>
+#include <algorithm>
 #include <esp_heap_caps.h>
 
 static volatile uint8_t heldModifiers = 0;   // modifier bits of the last keyboard report
@@ -1332,6 +1333,10 @@ bool isKeyboardConnected() {
   return bleState == BLEState::CONNECTED;
 }
 
+bool bleConnectBusy() {
+  return connectToKeyboard || connectTaskHandle != nullptr;
+}
+
 BLEState getConnectionState() {
   return bleState;
 }
@@ -1347,12 +1352,12 @@ void cancelPendingConnection() {
   }
 }
 
-void startDeviceScan() {
+void startDeviceScan(bool keepList) {
   cancelPendingConnection();
 
   bgScanStop();
   NimBLEDevice::getScan()->stop();
-  discoveredDevices.clear();
+  if (!keepList) discoveredDevices.clear();
   NimBLEDevice::getScan()->clearResults();
 
   NimBLEScan* scan = NimBLEDevice::getScan();
@@ -1393,23 +1398,49 @@ bool bleDeviceIsLikelyKeyboard(const BleDeviceInfo& d) {
   return false;
 }
 
+static bool bleDeviceHasName(const BleDeviceInfo& d) {
+  return !d.name.empty() && d.name != d.address;
+}
+
+// 0 = likely keyboard, 1 = has a name, 2 = address only.
+static int bleDeviceRank(const BleDeviceInfo& d) {
+  if (bleDeviceIsLikelyKeyboard(d)) return 0;
+  return bleDeviceHasName(d) ? 1 : 2;
+}
+
 int getVisibleDeviceIndices(bool showAll, int* idxOut, int maxOut,
-                            int* outTotal, int* outKeyboards) {
-  int total = (int)discoveredDevices.size();
-  int kbd = 0;
-  for (auto& d : discoveredDevices) if (bleDeviceIsLikelyKeyboard(d)) kbd++;
+                            int* outTotal, int* outKeyboards, int* outHidden) {
+  const int total = (int)discoveredDevices.size();
+  int kbd = 0, named = 0;
+  for (auto& d : discoveredDevices) {
+    const int r = bleDeviceRank(d);
+    if (r == 0) kbd++;
+    else if (r == 1) named++;
+  }
+  // The filter keeps keyboards; with none, devices that have a name (a crowded room is full of nameless phones and
+  // beacons, and a keyboard in pairing mode nearly always sends its name); with neither, everything.
+  const int keepRank = kbd > 0 ? 0 : (named > 0 ? 1 : 2);
+  const int filtered = keepRank == 0 ? kbd : (keepRank == 1 ? named : total);
   if (outTotal) *outTotal = total;
   if (outKeyboards) *outKeyboards = kbd;
+  if (outHidden) *outHidden = total - filtered;
 
-  // Fallback: if nothing classified as a keyboard, show everything so the user
-  // can still reach a keyboard that didn't advertise HID before connecting.
-  bool effectiveAll = showAll || (kbd == 0);
-
-  int n = 0;
-  for (int i = 0; i < total && n < maxOut; i++) {
-    if (effectiveAll || bleDeviceIsLikelyKeyboard(discoveredDevices[i]))
-      idxOut[n++] = i;
+  // Best first, sorted before the cap so a keyboard is never cut off by a long list: keyboards, named devices, the
+  // rest; the strongest signal (the nearest device) first within each.
+  std::vector<int> order;
+  order.reserve(total);
+  for (int i = 0; i < total; i++) {
+    if (showAll || bleDeviceRank(discoveredDevices[i]) <= keepRank) order.push_back(i);
   }
+  std::stable_sort(order.begin(), order.end(), [](int a, int b) {
+    const BleDeviceInfo& da = discoveredDevices[a];
+    const BleDeviceInfo& db = discoveredDevices[b];
+    const int ra = bleDeviceRank(da), rb = bleDeviceRank(db);
+    if (ra != rb) return ra < rb;
+    return da.rssi > db.rssi;
+  });
+  const int n = (int)order.size() < maxOut ? (int)order.size() : maxOut;
+  for (int i = 0; i < n; i++) idxOut[i] = order[i];
   return n;
 }
 

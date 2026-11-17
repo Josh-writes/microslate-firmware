@@ -463,13 +463,13 @@ static void drawEmptyList(GfxRenderer& r, bool tc, const ListGeom& g, const char
 // Which Bluetooth-bar buttons are usable right now.
 static uint8_t btBarMask() {
   int visIdx[32];
-  int total = 0, kbd = 0;
-  const int visCount = getVisibleDeviceIndices(btShowAllDevices, visIdx, 32, &total, &kbd);
-  const int itemCount = visCount + ((kbd > 0 && total > kbd) ? 1 : 0);
+  int total = 0, kbd = 0, hidden = 0;
+  const int visCount = getVisibleDeviceIndices(btShowAllDevices, visIdx, 32, &total, &kbd, &hidden);
+  const int itemCount = visCount + (hidden > 0 ? 1 : 0);
   const bool scanning = isDeviceScanning();
   const bool pairing = getCurrentPasskey() > 0;
   uint8_t m = 1;                                               // Back
-  if (itemCount > 0 && !scanning && !pairing) m |= 2;          // Connect / toggle
+  if (itemCount > 0 && !pairing) m |= 2;                       // Connect / toggle
   if (isKeyboardConnected() && !pairing) m |= 4;               // Disconnect
   if (!scanning && !pairing) m |= 8;                           // Scan
   return m;
@@ -1623,9 +1623,9 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
 
   // Device list data — keyboards first; non-keyboards hidden behind a toggle row.
   int visIdx[32];
-  int total = 0, kbd = 0;
-  int visCount = getVisibleDeviceIndices(btShowAllDevices, visIdx, 32, &total, &kbd);
-  const bool toggleShown = (kbd > 0 && total > kbd);
+  int total = 0, kbd = 0, hidden = 0;
+  int visCount = getVisibleDeviceIndices(btShowAllDevices, visIdx, 32, &total, &kbd, &hidden);
+  const bool toggleShown = hidden > 0;
   const int itemCount = visCount + (toggleShown ? 1 : 0);
 
   int sel = bluetoothDeviceSelection;
@@ -1682,10 +1682,12 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
       }
       if (total > 0) {
         char countStr[40];
-        if (btShowAllDevices || kbd == 0)
+        if (btShowAllDevices)
           snprintf(countStr, sizeof(countStr), "Devices: %d", total);
+        else if (kbd > 0)
+          snprintf(countStr, sizeof(countStr), "Keyboards: %d", kbd);
         else
-          snprintf(countStr, sizeof(countStr), "Keyboards: %d", visCount);
+          snprintf(countStr, sizeof(countStr), "Devices: %d of %d", total - hidden, total);
         drawRightText(renderer, FONT_SMALL, sw - 10, detailY, countStr, tc);
       }
     }
@@ -1736,8 +1738,9 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
         } else {
           // The "Show other devices" / "Show keyboards only" toggle row
           char toggleStr[40];
-          if (btShowAllDevices) snprintf(toggleStr, sizeof(toggleStr), "Show keyboards only");
-          else                  snprintf(toggleStr, sizeof(toggleStr), "Show other devices (%d)", total - kbd);
+          if (!btShowAllDevices) snprintf(toggleStr, sizeof(toggleStr), "Show other devices (%d)", hidden);
+          else if (kbd > 0)      snprintf(toggleStr, sizeof(toggleStr), "Show keyboards only");
+          else                   snprintf(toggleStr, sizeof(toggleStr), "Hide unnamed devices");
           drawClippedText(renderer, LIST_FONT_B, 20, nameY, toggleStr, cw - 40, ink);
         }
       }
@@ -1747,6 +1750,8 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
       const int cy = listTop + 20;
       if (scanning) {
         drawClippedText(renderer, FONT_UI, 20, cy, "Looking for keyboards...", sw - 40, tc);
+        drawClippedText(renderer, FONT_SMALL, 20, cy + lhUi + 6,
+                        "Put your keyboard in pairing mode", sw - 40, tc);
       } else {
         drawClippedText(renderer, FONT_UI, 20, cy, "No devices found", sw - 40, tc, EpdFontFamily::BOLD);
         drawClippedText(renderer, FONT_SMALL, 20, cy + lhUi + 6,
@@ -1759,8 +1764,8 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
   const bool pairing = (passkey > 0);
   const BarButton bar[4] = {
     {"Back", true},
-    {onToggle ? (btShowAllDevices ? "Keyboards" : "Show all") : "Connect",
-     itemCount > 0 && !scanning && !pairing},
+    {onToggle ? (btShowAllDevices ? (kbd > 0 ? "Keyboards" : "Named") : "Show all") : "Connect",
+     itemCount > 0 && !pairing},
     {"Disconnect", isKeyboardConnected() && !pairing},
     {"Scan", !scanning && !pairing},
   };

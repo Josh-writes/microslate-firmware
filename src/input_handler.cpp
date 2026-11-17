@@ -957,9 +957,9 @@ static void dispatchEvent(const KeyEvent& event) {
       // Build the visible list (keyboards first; others only when "show all").
       // The last selectable row may be the "Show other devices" toggle.
       int visIdx[32];
-      int total = 0, kbd = 0;
-      int visCount = getVisibleDeviceIndices(btShowAllDevices, visIdx, 32, &total, &kbd);
-      bool toggleShown = (kbd > 0 && total > kbd);   // a real filter choice exists
+      int total = 0, kbd = 0, hidden = 0;
+      int visCount = getVisibleDeviceIndices(btShowAllDevices, visIdx, 32, &total, &kbd, &hidden);
+      bool toggleShown = hidden > 0;   // a real filter choice exists
       int itemCount = visCount + (toggleShown ? 1 : 0);
 
       // Keep selection in range
@@ -984,8 +984,8 @@ static void dispatchEvent(const KeyEvent& event) {
         if (onToggle) {
           btShowAllDevices = !btShowAllDevices;   // flip filter, reset to top
           bluetoothDeviceSelection = 0;
-        } else if (visCount > 0 && !isDeviceScanning()) {
-          connectToDevice(visIdx[bluetoothDeviceSelection]);
+        } else if (visCount > 0) {
+          connectToDevice(visIdx[bluetoothDeviceSelection]);   // stops a running search first
         } else if (!isDeviceScanning()) {
           startDeviceScan();   // nothing to connect to: scan instead
         }

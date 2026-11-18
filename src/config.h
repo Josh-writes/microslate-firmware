@@ -68,7 +68,7 @@ struct KeyEvent {
 };
 
 // --- File Info ---
-static constexpr int MAX_FILENAME_LEN = 64;
+static constexpr int MAX_FILENAME_LEN = 64;   // longer names on the card are not listed (sync_names.h agrees)
 static constexpr int MAX_TITLE_LEN = 40;
 static constexpr int MAX_FIND_LEN = 48;   // in-document find query
 
@@ -82,12 +82,13 @@ struct FileInfo {
 static constexpr unsigned long AUTO_SAVE_IDLE_MS     = 10000;  // Save after 10s of no keystrokes
 static constexpr unsigned long AUTO_SAVE_MAX_MS      = 60000;  // Hard cap during continuous typing (shrinks crash loss window)
 static constexpr unsigned long AUTO_SAVE_PARA_MIN_MS = 3000;   // Also save on a paragraph break, at most this often
+static constexpr unsigned long AUTO_SAVE_RETRY_MS    = 5000;   // After a failed autosave, the next try waits this long
 
 // --- Firmware version ---
 // The release tag is "v" + this (release.yml checks it). Settings > Wi-Fi > Firmware update compares it with the
 // latest GitHub release. A test build may set another version and MS_UPDATE_REPO (a test repository) with -D.
 #ifndef MS_FIRMWARE_VERSION
-#define MS_FIRMWARE_VERSION "3.0.2"
+#define MS_FIRMWARE_VERSION "3.0.3"
 #endif
 
 // --- Buffer/Queue Sizes ---
@@ -178,6 +179,8 @@ static constexpr uint8_t HID_KEY_BAR0       = 0xF0;
 static constexpr uint8_t HID_KEY_TAB0       = 0xF4;
 // Pseudo key for a tap on the editor's menu icon (the same as Ctrl+M).
 static constexpr uint8_t HID_KEY_EDITOR_MENU = 0xF9;
+// Pseudo key for a press and hold on the highlighted row of the notes list: select notes for deleting.
+static constexpr uint8_t HID_KEY_ROW_HOLD   = 0xFA;
 static constexpr uint8_t HID_KEY_BACKSPACE  = 0x2A;
 static constexpr uint8_t HID_KEY_TAB        = 0x2B;
 static constexpr uint8_t HID_KEY_SPACE      = 0x2C;

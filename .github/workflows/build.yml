@@ -14,6 +14,15 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The device-free parts (editor layout, undo, line endings, HID, keymap, sleep rules, spellcheck, transfer, sync
+  # engine and providers against fake clouds), built with the sanitizers.
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host tests
+        run: sh test/run-host-tests.sh
+
   build:
     runs-on: ubuntu-latest
     strategy:

@@ -14,3 +14,6 @@
 // are also ignored while a delete confirmation is pending.
 // A no-op on devices without touch.
 void processTouch();
+
+// main.cpp: what a short press of the power button does (save, close the screen, main menu). The home swipe uses it.
+void goToMainMenu();

@@ -1,5 +1,6 @@
 #include "input_handler.h"
 #include "text_editor.h"
+#include "edit_history.h"
 #include "file_manager.h"
 #include "sync/cloud_service.h"
 #include "ble_keyboard.h"
@@ -23,6 +24,7 @@
 extern bool autoReconnectEnabled;
 extern bool cleanMode;
 extern bool deleteConfirmPending;
+extern bool deleteSelectMode;
 extern WritingMode writingMode;
 extern bool showWordCount;
 
@@ -253,10 +255,12 @@ static void handleFindKey(uint8_t keyCode, uint8_t modifiers) {
     return;
   }
   if (keyCode == HID_KEY_BACKSPACE) {
-    if (findBufferLen > 0) {
+    // A whole character: half of an accented letter would match the start of a real one and leave the caret inside it.
+    while (findBufferLen > 0) {
       findBufferLen--;
-      findBuffer[findBufferLen] = '\0';
+      if (((uint8_t)findBuffer[findBufferLen] & 0xC0) != 0x80) break;
     }
+    findBuffer[findBufferLen] = '\0';
     screenDirty = true;
     return;
   }
@@ -281,9 +285,18 @@ static bool warnIfSdGone() {
   return true;
 }
 
+// The save did not work (card gone, or there but full or failing): the note stays open with the warning, so its
+// text is never dropped by leaving. True when the note is saved.
+static bool saveOrWarn() {
+  if (!editorHasUnsavedChanges() || saveCurrentFile()) return true;
+  editorSdWarn = 1;
+  screenDirty = true;
+  return false;
+}
+
 static void leaveEditor() {
   if (warnIfSdGone()) return;
-  if (editorHasUnsavedChanges() && !saveCurrentFile() && warnIfSdGone()) return;   // the save found the card gone
+  if (!saveOrWarn()) return;
   currentState = UIState::FILE_BROWSER;
   screenDirty = true;
 }
@@ -291,7 +304,7 @@ static void leaveEditor() {
 // Transfer the open note: saved first, then the Transfer screen; leaving it returns to the notes list on this note.
 static void transferOpenNote() {
   if (warnIfSdGone()) return;
-  if (editorHasUnsavedChanges() && !saveCurrentFile()) { warnIfSdGone(); return; }   // never share an unsaved copy
+  if (!saveOrWarn()) return;   // never share an unsaved copy
   transfer::open(editorGetCurrentFile(), UIState::FILE_BROWSER);
   screenDirty = true;
 }
@@ -364,6 +377,10 @@ static bool takeBackFix() {
   const int tail = g_acAfter - (g_acStart + fixLen);   // the key that ended the word
   editorSelectRange(g_acStart, g_acStart + fixLen);
   editorInsertText(g_acOrig);
+  if (editorHasSelection()) {   // the note is full: the word could not go back, so this is an ordinary Backspace
+    editorSetCursorPosition(g_acAfter, false);
+    return false;
+  }
   editorSetCursorPosition(g_acStart + origLen + tail, false);
   spellsvc::autocorrectTakenBack(g_acOrig, (size_t)origLen);
   DBG_PRINTF("[SPELL] autocorrect taken back: \"%s\"\n", g_acOrig);
@@ -412,7 +429,8 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
   if (ctrl) {
     const char sc = keyboardLayoutShortcutLetter(keyCode);
     if (sc == 's') {
-      saveCurrentFile();
+      edhist::breakGroup();   // a save by hand ends the undo word (edit_history.h)
+      saveOrWarn();
       screenDirty = true;
       return;
     }
@@ -559,6 +577,10 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
   }
 }
 
+// The note the title screen renames when it was opened from the notes list: its name, not its row (a background sync
+// can refresh the list while the screen is open).
+static char renameTarget[MAX_FILENAME_LEN] = "";
+
 // Open the title edit screen, returning to `returnTo` on confirm/cancel
 static void openTitleEdit(const char* currentTitle, UIState returnTo) {
   strncpy(renameBuffer, currentTitle, MAX_TITLE_LEN - 1);
@@ -571,6 +593,7 @@ static void openTitleEdit(const char* currentTitle, UIState returnTo) {
   if (returnTo == UIState::TEXT_EDITOR) file = editorGetCurrentFile();
   else if (selectedFileIndex >= 1 && selectedFileIndex <= getFileCount()) file = getFileList()[selectedFileIndex - 1].filename;
   snprintf(renameExt, sizeof(renameExt), "%s", file[0] ? noteExtOf(file) : (newNotesMd ? ".md" : ".txt"));
+  snprintf(renameTarget, sizeof(renameTarget), "%s", returnTo == UIState::TEXT_EDITOR ? "" : file);
   currentState = UIState::RENAME_FILE;
   screenDirty = true;
 }
@@ -578,24 +601,27 @@ static void openTitleEdit(const char* currentTitle, UIState returnTo) {
 // Handle title edit input
 static void handleRenameKey(uint8_t keyCode, uint8_t modifiers) {
   if (keyCode == HID_KEY_ENTER) {
+    const bool newNote = renameReturnState == UIState::TEXT_EDITOR && editorGetCurrentFile()[0] == '\0';
+    // A new note needs a name: with none it could never be saved, so Enter waits for one.
+    if (newNote && renameBufferLen == 0) return;
     if (renameBufferLen > 0) {
-      if (renameReturnState == UIState::TEXT_EDITOR) {
+      if (newNote) {
+        // New file — derive filename from title
+        char filename[MAX_FILENAME_LEN];
+        if (!deriveUniqueFilename(renameBuffer, renameExt, filename, MAX_FILENAME_LEN)) return;   // no free name
         editorSetCurrentTitle(renameBuffer);
-        if (editorGetCurrentFile()[0] == '\0') {
-          // New file — derive filename from title
-          char filename[MAX_FILENAME_LEN];
-          deriveUniqueFilename(renameBuffer, renameExt, filename, MAX_FILENAME_LEN);
-          editorSetCurrentFile(filename);
-        } else {
-          // Existing file — rename on disk to match new title (and format)
-          updateFileTitle(editorGetCurrentFile(), renameBuffer, renameExt);
-        }
+        editorSetCurrentFile(filename);
         editorSetUnsavedChanges(true);
         saveCurrentFile();
-      } else {
+      } else if (renameReturnState == UIState::TEXT_EDITOR) {
+        // Existing file — rename on disk to match new title (and format)
+        editorSetCurrentTitle(renameBuffer);
+        updateFileTitle(editorGetCurrentFile(), renameBuffer, renameExt);
+        editorSetUnsavedChanges(true);
+        saveCurrentFile();
+      } else if (renameTarget[0]) {
         // Updating title of a file selected in the browser
-        FileInfo* files = getFileList();
-        updateFileTitle(files[selectedFileIndex - 1].filename, renameBuffer, renameExt);   // row 0 is "+ New note"
+        updateFileTitle(renameTarget, renameBuffer, renameExt);
       }
     }
     currentState = renameReturnState;
@@ -721,6 +747,8 @@ static uint8_t barKey(int idx, uint8_t third, uint8_t fourth) {
 
 static void dispatchEvent(const KeyEvent& event) {
   if (!event.pressed) return;
+  DBG_PRINTF("[KEY] 0x%02x mods 0x%02x screen %d delete-ask %d select %d\n", event.keyCode, event.modifiers,
+             (int)currentState, (int)deleteConfirmPending, (int)deleteSelectMode);
 
   // Win/Cmd + key is a system shortcut, never text (the MX Keys Mini's F-row sends Win+H
   // and Win+Shift+S). Win+Space switches the keyboard layout in the editor, as on a PC;
@@ -759,6 +787,8 @@ static void dispatchEvent(const KeyEvent& event) {
       if (event.keyCode == HID_KEY_ENTER) {
         if (mainMenuSelection == 0) {
           refreshFileList();
+          deleteSelectMode = false;
+          noteMarkAll(false);
           currentState = UIState::FILE_BROWSER;
           screenDirty = true;
         } else if (mainMenuSelection == 1) {
@@ -784,7 +814,7 @@ static void dispatchEvent(const KeyEvent& event) {
       // Rows: 0 = "+ New note", then one per file (file = row - 1).
       const int fc = getFileCount();
       const int rows = fc + 1;
-      const bool onFile = (selectedFileIndex >= 1);
+      const bool onFile = (selectedFileIndex >= 1 && selectedFileIndex <= fc);   // a sync can shrink the list
 
       // A note is waiting for its sync before it opens ("Syncing with OneDrive..."): Esc (or Back) stays on the
       // list instead; other keys wait.
@@ -794,22 +824,62 @@ static void dispatchEvent(const KeyEvent& event) {
       }
 
       // "This note is too large to open": any key (or a tap, which arrives as Enter) goes back to the list.
-      if (loadRefusedBytes()) {
+      if (loadRefusedBytes() || loadReadFailed()) {
         loadRefusedClear();
         screenDirty = true;
         break;
       }
 
-      // Delete confirmation pending: Enter / the Delete button confirm, anything else cancels.
+      const bool ctrl = isCtrl(event.modifiers) && !isAltGr(event.modifiers);
+      const char sc = ctrl ? keyboardLayoutShortcutLetter(event.keyCode) : 0;
+
+      // Delete confirmation pending: Enter / the Delete button confirm; Space on "Delete this note?" opens delete mode
+      // with that note ticked (the prompt says so when a keyboard is connected); anything else goes back (to the ticked
+      // list in delete mode, else to the plain list with nothing ticked).
       if (deleteConfirmPending) {
-        if ((event.keyCode == HID_KEY_ENTER || event.keyCode == HID_KEY_BAR0 + 1) && onFile) {
-          FileInfo* files = getFileList();
-          deleteFile(files[selectedFileIndex - 1].filename);
+        if (!deleteSelectMode && !ctrl && event.keyCode == HID_KEY_SPACE) {
+          deleteSelectMode = true;   // the note stays ticked
+        } else if (event.keyCode == HID_KEY_ENTER || event.keyCode == HID_KEY_BAR0 + 1) {
+          deleteMarkedNotes();
+          deleteSelectMode = false;
           const int newFc = getFileCount();
           if (selectedFileIndex > newFc) selectedFileIndex = newFc;   // last row is file newFc - 1
           if (selectedFileIndex < 0) selectedFileIndex = 0;
+        } else if (!deleteSelectMode || kClassicUi) {   // button devices: Cancel leaves delete mode, nothing deleted
+          noteMarkAll(false);
+          deleteSelectMode = false;
         }
         deleteConfirmPending = false;
+        screenDirty = true;
+        break;
+      }
+
+      // Delete mode: the list without "+ New note", each note with a tick box. Enter / Space (or a tap) ticks the
+      // highlighted note. Bar: Cancel / All (None when all are ticked) / Delete. Keyboard: Esc cancel, Ctrl+A all,
+      // Ctrl+D, Delete or Backspace asks to delete the ticked notes.
+      if (deleteSelectMode) {
+        if (selectedFileIndex < 1) selectedFileIndex = 1;   // "+ New note" is not in this list
+        int sel = selectedFileIndex - 1;
+        int act = -1;
+        const bool nav = barNav(event, sel, fc, act);
+        if (fc > 0) selectedFileIndex = sel + 1;
+        if (nav && act < 0) break;
+        const uint8_t k = event.keyCode;
+        const int marked = noteMarkedCount();
+        if (kClassicUi && act < 0 && k == HID_KEY_ESCAPE && marked > 0) {
+          deleteConfirmPending = true;   // button devices: Back asks "Delete n notes?" (Select deletes, Back cancels)
+        } else if (act == 0 || (act < 0 && k == HID_KEY_ESCAPE) || fc == 0) {
+          noteMarkAll(false);
+          deleteSelectMode = false;
+        } else if (act == 1 || (act < 0 && sc == 'a')) {
+          noteMarkAll(marked < fc);
+        } else if (act == 2 || (act < 0 && (sc == 'd' || k == HID_KEY_DELETE || k == HID_KEY_BACKSPACE))) {
+          if (marked > 0) deleteConfirmPending = true;
+        } else if (act < 0 && !ctrl && (k == HID_KEY_ENTER || k == HID_KEY_SPACE)) {
+          noteToggleMark(getFileList()[selectedFileIndex - 1].filename);
+        } else {
+          break;
+        }
         screenDirty = true;
         break;
       }
@@ -817,21 +887,28 @@ static void dispatchEvent(const KeyEvent& event) {
       int act = -1;
       if (barNav(event, selectedFileIndex, rows, act) && act < 0) break;   // plain navigation
 
-      // Bar buttons: Back / Rename / Delete / Transfer (E1001: Back / Transfer). Keyboard: Esc back, Enter open,
-      // Ctrl+N rename, Ctrl+D delete, Ctrl+T transfer.
-      const bool ctrl = isCtrl(event.modifiers) && !isAltGr(event.modifiers);
-      const char sc = ctrl ? keyboardLayoutShortcutLetter(event.keyCode) : 0;
+      // Bar buttons: Back / Rename / Delete / Transfer, on the E1001 too. Keyboard: Esc back, Enter open, Ctrl+N
+      // rename, Delete / Backspace (a Mac keyboard's "delete") or Ctrl+D delete, Ctrl+T transfer. Delete asks "Delete
+      // this note?" for the highlighted note. Space (on the list or on that question) opens delete mode above with the
+      // note ticked, and so does holding a note on a touch screen.
       const bool keyBack = act < 0 && event.keyCode == HID_KEY_ESCAPE;
       const bool doBack = act == 0 || keyBack;
       const bool doOpen = act < 0 && event.keyCode == HID_KEY_ENTER;
-      const bool doRename = (!kClassicUi && act == 1) || (act < 0 && sc == 'n');
-      const bool doDelete = (!kClassicUi && act == 2) || (act < 0 && sc == 'd');
+      const bool doRename = act == 1 || (act < 0 && sc == 'n');
+      const bool doDelete = act == 2 || (act < 0 && (sc == 'd' || (!ctrl && (event.keyCode == HID_KEY_DELETE ||
+                                                                             event.keyCode == HID_KEY_BACKSPACE))));
       const bool doTransfer = act == 3 || (act < 0 && sc == 't');
+      const bool doSelect = act < 0 && (event.keyCode == HID_KEY_ROW_HOLD || (!ctrl && event.keyCode == HID_KEY_SPACE));
 
-      if (doOpen && !onFile) {
+      if (doSelect && onFile) {
+        noteMarkAll(false);
+        noteToggleMark(getFileList()[selectedFileIndex - 1].filename);
+        deleteSelectMode = true;
+        screenDirty = true;
+      } else if (doOpen && !onFile) {
         createNewFile();
         openTitleEdit("Untitled", UIState::TEXT_EDITOR);
-      } else if (doOpen) {
+      } else if (doOpen && onFile) {
         // During a sync the note's own transfer goes first and it opens when that is done (cloud_service.h).
         FileInfo* files = getFileList();
         if (!cloud::holdNoteOpen(files[selectedFileIndex - 1].filename)) loadFile(files[selectedFileIndex - 1].filename);
@@ -840,6 +917,8 @@ static void dispatchEvent(const KeyEvent& event) {
         FileInfo* files = getFileList();
         openTitleEdit(files[selectedFileIndex - 1].title, UIState::FILE_BROWSER);
       } else if (doDelete && onFile) {
+        noteMarkAll(false);
+        noteToggleMark(getFileList()[selectedFileIndex - 1].filename);
         deleteConfirmPending = true;
         screenDirty = true;
       } else if (doTransfer && onFile) {

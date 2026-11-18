@@ -45,6 +45,9 @@ const char* holdNotice();
 void browseHoldCancel();          // left the notes list: the note is not opened
 void onSdLost();                  // the SD card was pulled: stop any sync and start none until it is back
 void onSdBack();
+// The user deleted these notes from the notes list (n names): every cloud's sync record marks them, so the next sync
+// removes them there even when they are most of the notes.
+void onNotesDeleted(const char* const* names, int n);
 void flushBeforeSleep();          // bounded wait (about 10 s) so the last edit reaches the cloud before sleep
 // Transfer: wifiInUse() = a sync is connecting, running or keeping Wi-Fi up for a moment after one. radioTakenOver()
 // stops a sync in progress because the radio becomes a hotspot; a push that was waiting runs again later.

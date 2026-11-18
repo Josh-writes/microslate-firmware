@@ -5,6 +5,7 @@
 #include "../config.h"
 #include "../text_editor.h"
 #include "../diag/mem_diag.h"
+#include "../wall_clock.h"
 
 #include <Arduino.h>
 #include <HTTPClient.h>
@@ -16,7 +17,6 @@
 #include <SDCardManager.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
-#include <esp_sntp.h>
 
 #include <atomic>
 #include <ctime>
@@ -43,15 +43,11 @@ uint32_t DeviceClock::millisNow() { return millis(); }
 
 uint32_t DeviceClock::random32() { return esp_random(); }
 
-// True once the internet time arrived (NTP). Kept through deep sleep, where the system clock keeps running; a
-// restart asks again. A plausible-looking clock is not enough: the card clock's 2030 date once passed that test.
-static RTC_DATA_ATTR bool g_timeFromNet = false;
-static void onNetTime(struct timeval*) { g_timeFromNet = true; }
-
+// Only once the internet time arrived (NTP; wall_clock.h). Kept through deep sleep, where the system clock keeps
+// running; a restart asks again. A plausible-looking clock is not enough: the card clock's 2030 date once passed
+// that test, and the clock chip's time is not trusted for a sync either.
 uint32_t DeviceClock::epochNow() {
-  static bool hooked = false;
-  if (!hooked) { sntp_set_time_sync_notification_cb(onNetTime); hooked = true; }   // before the first configTime
-  if (!g_timeFromNet) return 0;
+  if (!wallclock::netTimeSeen()) return 0;
   const time_t t = time(nullptr);
   return t > 1700000000 ? (uint32_t)t : 0;
 }
@@ -191,7 +187,9 @@ bool DeviceStorage::writeState(const std::string& data) {
 }
 
 bool DeviceStorage::isOpenNote(const std::string& name) {
-  return currentState == UIState::TEXT_EDITOR && name == editorGetCurrentFile();
+  // The title screen opened from the editor still holds the note's text (it saves it on Enter): still open.
+  return (currentState == UIState::TEXT_EDITOR || currentState == UIState::RENAME_FILE) &&
+         name == editorGetCurrentFile();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -222,10 +220,11 @@ void DeviceTransport::psramEnd() {
 
 namespace {
 
-enum : int { kIdle = 0, kRequested = 1, kRunning = 2, kDone = 3 };
+// kCancelling: cancel() came while the request ran; the worker drops the answer and goes back to kIdle. Every hand-over
+// between the main task and the worker is a compare-and-swap, so a cancel can never leave the transport stuck.
+enum : int { kIdle = 0, kRequested = 1, kRunning = 2, kDone = 3, kCancelling = 4 };
 
 std::atomic<int> g_state{kIdle};
-std::atomic<bool> g_cancelled{false};
 HttpRequest g_req;    // owned by the worker while state is kRequested/kRunning, by the caller otherwise
 HttpResponse g_resp;  // owned by the worker until kDone
 TaskHandle_t g_task = nullptr;
@@ -308,6 +307,10 @@ HttpResponse perform(const HttpRequest& r) {
     g_client->setTimeout(30);
   }
   if (host != g_host) { g_client->stop(); g_host = host; }  // never reuse another host's connection
+  // A kept-alive connection left idle (the scan of the card's notes takes 8-15 s) went stale: the first request after
+  // it hung or failed (E1001 logs, 2026-11-19). Reopen after 5 s idle; back-to-back requests still reuse it.
+  static uint32_t lastUse = 0;
+  if (lastUse && millis() - lastUse > 5000) g_client->stop();
 
   // Log the request without its query string (it can carry codes) and without headers (they carry the token).
   const uint32_t t0 = millis();
@@ -342,11 +345,16 @@ HttpResponse perform(const HttpRequest& r) {
     g_client->stop();
   } else {
     out.status = code;
-    String body = http.getString();
-    out.body.assign(body.c_str(), body.length());
+    // 204 No Content (a OneDrive delete) and 304 have no body and usually no length: getString() would then read
+    // until the kept-alive connection closes, which stalled every delete for minutes (E1001 log, 2026-11-19).
+    if (code != 204 && code != 304) {
+      String body = http.getString();
+      out.body.assign(body.c_str(), body.length());
+    }
     out.location = http.header("Location").c_str();
   }
   http.end();
+  lastUse = millis();
   DBG_PRINTF("[http] -> %d, %u bytes in, %u ms%s%s\n", out.status, (unsigned)out.body.size(), (unsigned)(millis() - t0),
              out.error.empty() ? "" : ", ", out.error.c_str());
   memdiag::stage("request done");
@@ -356,19 +364,18 @@ HttpResponse perform(const HttpRequest& r) {
 void workerTask(void*) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if (g_state.load() != kRequested) {
-      if (g_state.load() == kIdle && g_client) { g_client->stop(); g_host.clear(); }  // close request
+    int s = kRequested;
+    if (!g_state.compare_exchange_strong(s, kRunning)) {   // not a request (or cancelled before it started)
+      if (s == kIdle && g_client) { g_client->stop(); g_host.clear(); }  // close request
       continue;
     }
-    g_state.store(kRunning);
     HttpResponse r = perform(g_req);
     g_req = HttpRequest();
-    if (g_cancelled.load()) {
-      g_cancelled.store(false);
+    g_resp = std::move(r);
+    s = kRunning;
+    if (!g_state.compare_exchange_strong(s, kDone)) {   // kCancelling: nobody wants the answer
+      g_resp = HttpResponse();
       g_state.store(kIdle);
-    } else {
-      g_resp = std::move(r);
-      g_state.store(kDone);
     }
   }
 }
@@ -388,7 +395,6 @@ DeviceTransport::DeviceTransport() {
 bool DeviceTransport::begin(const HttpRequest& req) {
   if (g_state.load() != kIdle || !g_task) return false;
   g_req = req;
-  g_cancelled.store(false);
   g_state.store(kRequested);
   xTaskNotifyGive(g_task);
   return true;
@@ -407,9 +413,21 @@ void DeviceTransport::closeConnection() {
 }
 
 void DeviceTransport::cancel() {
-  const int s = g_state.load();
-  if (s == kRunning) g_cancelled.store(true);  // the blocking call finishes on its own; its answer is dropped
-  else if (s == kDone) { g_resp = HttpResponse(); g_state.store(kIdle); }
+  for (;;) {
+    int s = g_state.load();
+    if (s == kRequested) {   // not started yet: it never will (the worker's wake-up then finds kIdle)
+      if (g_state.compare_exchange_strong(s, kIdle)) return;
+    } else if (s == kRunning) {   // the blocking call finishes on its own; its answer is dropped
+      if (g_state.compare_exchange_strong(s, kCancelling)) return;
+    } else if (s == kDone) {
+      g_resp = HttpResponse();
+      g_state.store(kIdle);
+      return;
+    } else {
+      return;   // kIdle, or already cancelling
+    }
+    // The worker moved on between the load and the swap: look again.
+  }
 }
 
 }  // namespace msync

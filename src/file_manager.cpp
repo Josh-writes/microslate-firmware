@@ -5,6 +5,7 @@
 #include "text_editor.h"
 #include "editor_prof.h"
 #include "sync/cloud_service.h"
+#include "wall_clock.h"
 #include <Arduino.h>
 #include <SDCardManager.h>
 #include <Preferences.h>
@@ -14,6 +15,8 @@
 #include <ctime>
 #include <sys/time.h>
 #include <esp_timer.h>
+#include <string>
+#include <vector>
 #if defined(CONFIG_SPIRAM)
 #include <esp_heap_caps.h>
 #endif
@@ -44,51 +47,160 @@ static bool growFileList() {
 // Shared state
 extern UIState currentState;
 
-// --- Monotonic clock for file timestamps ---------------------------------
-// The X4 has no RTC, so without this every file would get SdFat's identical
-// default stamp and the browser couldn't tell new notes from old. We keep a
-// coarse clock seeded from a persisted epoch that only ever moves forward:
-// every save stamps the file with cardNow() and persists it, so after a
-// reboot the clock resumes just past the last save. That makes each newly
-// saved note strictly newer than everything before it — enough to sort by.
+// --- Delete mode: the notes ticked for deleting ----------------------------
+// Kept by file name, so a list refresh (a sync) keeps them; names that left the list are dropped on each refresh.
+static std::vector<std::string> g_marks;
+
+static int markIndex(const char* filename) {
+  for (size_t i = 0; i < g_marks.size(); i++)
+    if (g_marks[i] == filename) return (int)i;
+  return -1;
+}
+
+static void pruneMarks() {
+  if (g_marks.empty()) return;
+  std::vector<std::string> kept;
+  for (int i = 0; i < fileCount; i++)
+    if (markIndex(fileList[i].filename) >= 0) kept.push_back(fileList[i].filename);
+  g_marks.swap(kept);
+}
+
+bool noteMarked(const char* filename) { return markIndex(filename) >= 0; }
+
+void noteToggleMark(const char* filename) {
+  const int i = markIndex(filename);
+  if (i >= 0) g_marks.erase(g_marks.begin() + i);
+  else g_marks.push_back(filename);
+}
+
+void noteMarkAll(bool on) {
+  g_marks.clear();
+  if (on)
+    for (int i = 0; i < fileCount; i++) g_marks.push_back(fileList[i].filename);
+}
+
+int noteMarkedCount() { return (int)g_marks.size(); }
+
+const char* noteFirstMarkedTitle() {
+  for (int i = 0; i < fileCount; i++)
+    if (markIndex(fileList[i].filename) >= 0) return fileList[i].title;
+  return "";
+}
+
+// --- Note dates ------------------------------------------------------------
+// Notes are dated with the real time when it is known (wall_clock.h: the clock chip on the Sticky and E1001, or the
+// internet time). Otherwise a card clock dead-reckons from the last date it stored: every save stamps the file with
+// cardNow() and persists it, so after a restart the clock resumes just past the last save. The list sorts by these
+// dates, newest first.
 //
-// This clock is the card's own: it no longer sets the system time (2026-11-02). It used to, and its 2030 date
-// looked like a real one to the cloud code, which then never asked the internet for the time: uploads carried 2030
-// dates and the date check before a sync did nothing. The system time is now set only from the internet (NTP).
+// Before real dates (up to 3.0.2) the card clock was the only one, seeded at 2030 so that it sat above the compile
+// dates older builds stamped. Its notes are re-dated the first time the real time is known (redateFutureNotes).
+// The card clock does not set the system time (2026-11-02): its 2030 date once looked real to the cloud code.
 static Preferences clockPrefs;
 static uint32_t g_cardBase = 0;      // card clock at boot (seconds)
 static int64_t g_cardBootUs = 0;     // esp_timer time of that reading
+static bool g_clockReal = false;     // the stored date is a real one (NVS "real"), not the old 2030 count
 
 static time_t cardNow() {
+  if (wallclock::known()) return time(nullptr);
   return (time_t)g_cardBase + (time_t)((esp_timer_get_time() - g_cardBootUs) / 1000000);
 }
-// Seed is a pure relative-ordering sentinel (no UI shows dates). It must sit
-// ABOVE any plausible firmware build date, because legacy notes written by
-// older builds carry that build's compile-date stamp (~2026) — if the seed
-// were lower, those old files would outrank fresh saves and stick to the top.
+// The old card clock's start: above any firmware build date, so legacy notes stamped with their build's compile date
+// (~2026) did not outrank fresh saves. Used only until the device has had a real date.
 static constexpr unsigned long CLOCK_DEFAULT_EPOCH = 1900000000UL;  // ~2030-03
 
-// SdFat calls this whenever it creates or syncs a file's directory entry.
+// SdFat calls this whenever it creates or syncs a file's directory entry. Dates are UTC (no time zone setting).
 static void sdDateTimeCallback(uint16_t* date, uint16_t* timeOut) {
   time_t now = cardNow();
   struct tm t;
-  localtime_r(&now, &t);
+  gmtime_r(&now, &t);
   *date = FS_DATE(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
   *timeOut = FS_TIME(t.tm_hour, t.tm_min, t.tm_sec);
 }
 
+// A FAT modify date and time packed as the list's sort key (date in the high half), and back to seconds.
+static unsigned long fatKey(time_t when) {
+  struct tm t;
+  gmtime_r(&when, &t);
+  return ((unsigned long)FS_DATE(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday) << 16) |
+         FS_TIME(t.tm_hour, t.tm_min, t.tm_sec);
+}
+static time_t fatKeyTime(unsigned long key) {
+  const unsigned d = (unsigned)(key >> 16), t = (unsigned)(key & 0xFFFF);
+  return wallclock::fromUtc(1980 + (d >> 9), (d >> 5) & 15, d & 31, t >> 11, (t >> 5) & 63, (t & 31) * 2);
+}
+
 static void clockInit() {
   clockPrefs.begin("clock", false);
-  unsigned long base = clockPrefs.getULong("base", CLOCK_DEFAULT_EPOCH);
-  if (base < CLOCK_DEFAULT_EPOCH) base = CLOCK_DEFAULT_EPOCH;
+  unsigned long base = clockPrefs.getULong("base", 0);
+  g_clockReal = clockPrefs.getUChar("real", 0) != 0;
+  if (!g_clockReal && base < CLOCK_DEFAULT_EPOCH) base = CLOCK_DEFAULT_EPOCH;
   g_cardBase = (uint32_t)base;
   g_cardBootUs = esp_timer_get_time();
   FsDateTime::setCallback(sdDateTimeCallback);
 }
 
-// Persist the advancing clock so timestamps stay monotonic across reboots.
+// Persist the clock so dates stay in order across restarts.
 static void clockPersist() {
   clockPrefs.putULong("base", (unsigned long)cardNow());
+  if (wallclock::known() && !g_clockReal) {
+    clockPrefs.putUChar("real", 1);
+    g_clockReal = true;
+  }
+}
+
+// Without the real time a note can carry a later date than the card clock (a sync download or a Wi-Fi transfer is
+// stamped but does not persist the clock; a card from another device has its own dates). The clock moves past the
+// newest note, so the next save still goes to the top.
+static void clockPassNewest(unsigned long newestKey) {
+  if (wallclock::known() || newestKey == 0) return;
+  const time_t newest = fatKeyTime(newestKey);
+  const time_t now = cardNow();
+  if (newest >= now) g_cardBase += (uint32_t)(newest - now + 2);
+}
+
+// Notes dated more than two days ahead of the real time (the old 2030 card clock, or a card from a device that still
+// uses it) get dates just before now, two seconds apart (the FAT step), in their old order: a new note then goes
+// above them, and their order among themselves stays as the list showed it. Only the directory entry's modify date
+// changes; the cloud sync compares content (CRC), not dates.
+static int redateFutureNotes() {
+  if (!wallclock::known()) return 0;
+  const time_t now = time(nullptr);
+  const unsigned long limit = fatKey(now + 2 * 86400);
+
+  struct Late { std::string name; unsigned long key; };
+  std::vector<Late> late;
+  auto root = SdMan.open("/notes");
+  if (!root || !root.isDirectory()) { if (root) root.close(); return 0; }
+  char name[256];
+  for (auto f = root.openNextFile(); f; f = root.openNextFile()) {
+    f.getName(name, sizeof(name));
+    uint16_t d = 0, t = 0;
+    if (name[0] != '.' && isNoteFileName(name) && f.getModifyDateTime(&d, &t)) {
+      const unsigned long key = ((unsigned long)d << 16) | t;
+      if (key > limit) late.push_back({name, key});
+    }
+    f.close();
+  }
+  root.close();
+  if (late.empty()) return 0;
+
+  std::stable_sort(late.begin(), late.end(), [](const Late& a, const Late& b) { return a.key < b.key; });
+  const int n = (int)late.size();
+  int done = 0;
+  for (int i = 0; i < n; i++) {
+    const time_t when = now - 2 * (time_t)(n - i);
+    struct tm t;
+    gmtime_r(&when, &t);
+    char path[320];
+    snprintf(path, sizeof(path), "/notes/%s", late[i].name.c_str());
+    auto f = SdMan.open(path, O_RDWR);
+    if (!f) continue;
+    if (f.timestamp(T_WRITE, t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)) done++;
+    f.close();
+  }
+  DBG_PRINTF("Re-dated %d of %d notes that were dated in the future\n", done, n);
+  return done;
 }
 
 // Convert filename to a readable display title.
@@ -134,25 +246,31 @@ static void titleToFilename(const char* title, const char* ext, char* out, int m
   strcpy(out + j, ext);
 }
 
-// Derive a unique /notes/ filename from a title, handling collisions with _2, _3 suffix.
-void deriveUniqueFilename(const char* title, const char* ext, char* out, int maxLen) {
+// Derive a unique /notes/ filename from a title, handling collisions with _2, _3 suffix. False (and out empty) when
+// no free name was found: the caller must not write, since every name it could use belongs to another note.
+bool deriveUniqueFilename(const char* title, const char* ext, char* out, int maxLen) {
   titleToFilename(title, ext, out, maxLen);
 
   char path[320];
   snprintf(path, sizeof(path), "/notes/%s", out);
-  if (!SdMan.exists(path)) return;
+  if (!SdMan.exists(path)) return true;
 
-  // Collision — strip the extension, try _2, _3 ...
+  // Collision — strip the extension, try _2, _3 ... The base is shortened so the suffix and extension always fit.
   char base[MAX_FILENAME_LEN];
-  strncpy(base, out, maxLen - 1);
-  base[maxLen - 1] = '\0';
+  strncpy(base, out, sizeof(base) - 1);
+  base[sizeof(base) - 1] = '\0';
   base[strlen(base) - strlen(ext)] = '\0';
+  const int baseMax = maxLen - 1 - (int)strlen(ext) - 5;   // "_9999"
+  if (baseMax > 0 && (int)strlen(base) > baseMax) base[baseMax] = '\0';
 
-  int suffix = 2;
-  while (SdMan.exists(path) && suffix <= 99) {
-    snprintf(out, maxLen, "%s_%d%s", base, suffix++, ext);
+  for (int suffix = 2; suffix <= 9999; suffix++) {
+    snprintf(out, maxLen, "%s_%d%s", base, suffix, ext);
     snprintf(path, sizeof(path), "/notes/%s", out);
+    if (!SdMan.exists(path)) return true;
   }
+  DBG_PRINTF("deriveUniqueFilename: no free name for %s\n", base);
+  out[0] = '\0';
+  return false;
 }
 
 static bool sdMounted = false;
@@ -217,6 +335,10 @@ static void finishSdSetup() {
   }
 
   recoverTempFiles();   // reconcile any .tmp left by a crash mid-save
+  if (wallclock::known()) {
+    redateFutureNotes();
+    clockPersist();
+  }
 
   DBG_PRINTLN("SD Card initialized");
   refreshFileList();
@@ -237,6 +359,14 @@ bool sdCardMissing() { return sdGone; }
 bool sdLost() { return sdGone; }
 
 // Called from the main loop outside the editor: notices a pulled card. The editor notices when a save fails.
+void fileManagerClockPoll() {
+  if (!wallclock::poll()) return;
+  if (!sdMounted || sdGone) return;   // the card's setup re-dates when it is back
+  const bool moved = redateFutureNotes() > 0;
+  clockPersist();
+  if (moved) refreshFileListKeepingSelection();
+}
+
 void fileManagerPoll() {
   static unsigned long lastMs = 0;
   if (sdGone || millis() - lastMs < 3000) return;
@@ -285,7 +415,8 @@ void recoverTempFiles() {
   for (auto f = root.openNextFile(); f; f = root.openNextFile()) {
     f.getName(name, sizeof(name));
     int len = (int)strlen(name);
-    if (len > 4 && strcasecmp(name + len - 4, ".tmp") == 0 && n < 16) {
+    // A name too long for the list is not a note the device handles (refreshFileList skips it too).
+    if (len > 4 && len < (int)sizeof(tmpNames[0]) && strcasecmp(name + len - 4, ".tmp") == 0 && n < 16) {
       strncpy(tmpNames[n], name, sizeof(tmpNames[0]) - 1);
       tmpNames[n][sizeof(tmpNames[0]) - 1] = '\0';
       n++;
@@ -338,7 +469,9 @@ void refreshFileList() {
       continue;
     }
 
-    if (isNoteFileName(name)) {   // .txt and .md notes
+    // .txt and .md notes. A name too long to keep whole is skipped (the sync skips it too, sync_names.h): a
+    // shortened name would open, rename and delete a file that does not exist.
+    if (isNoteFileName(name) && strlen(name) < (size_t)MAX_FILENAME_LEN) {
       // Pack the FAT modify date/time into a single comparable key (date is
       // the high half so it dominates the ordering).
       uint16_t d = 0, t = 0;
@@ -355,8 +488,7 @@ void refreshFileList() {
           if (fileList[i].modTime < mod && (slot < 0 || fileList[i].modTime < fileList[slot].modTime)) slot = i;
       }
       if (slot >= 0) {
-        strncpy(fileList[slot].filename, name, MAX_FILENAME_LEN - 1);
-        fileList[slot].filename[MAX_FILENAME_LEN - 1] = '\0';
+        snprintf(fileList[slot].filename, MAX_FILENAME_LEN, "%s", name);
         filenameToTitle(name, fileList[slot].title, MAX_TITLE_LEN);
         fileList[slot].modTime = mod;
       }
@@ -364,6 +496,11 @@ void refreshFileList() {
     file.close();
   }
   root.close();
+
+  unsigned long newest = 0;
+  for (int i = 0; i < fileCount; i++) newest = std::max(newest, fileList[i].modTime);
+  clockPassNewest(newest);
+  pruneMarks();
 
   // Newest first; equal stamps keep directory order.
   if (fileCount > 1)
@@ -373,12 +510,28 @@ void refreshFileList() {
   DBG_PRINTF("File listing: %d files found\n", fileCount);
 }
 
+// The notes changed on the card (a sync, new dates): read the list again, keeping the highlight on the same note (a
+// note moving to the top would otherwise move it onto another one).
+extern int selectedFileIndex;
+void refreshFileListKeepingSelection() {
+  char sel[MAX_FILENAME_LEN] = "";
+  if (selectedFileIndex >= 1 && selectedFileIndex <= fileCount)
+    snprintf(sel, sizeof(sel), "%s", fileList[selectedFileIndex - 1].filename);
+  refreshFileList();
+  if (!sel[0]) return;
+  for (int i = 0; i < fileCount; i++)
+    if (strcmp(fileList[i].filename, sel) == 0) { selectedFileIndex = i + 1; return; }
+  if (selectedFileIndex > fileCount) selectedFileIndex = fileCount;
+}
+
 int getFileCount() { return fileCount; }
 FileInfo* getFileList() { return fileList; }
 
 static size_t g_loadRefusedBytes = 0;
+static bool g_loadReadFailed = false;
 size_t loadRefusedBytes() { return g_loadRefusedBytes; }
-void loadRefusedClear() { g_loadRefusedBytes = 0; }
+bool loadReadFailed() { return g_loadReadFailed; }
+void loadRefusedClear() { g_loadRefusedBytes = 0; g_loadReadFailed = false; }
 
 // The stored style of the open note (line endings, byte-order mark); a note it does not name saves as plain LF.
 static NoteStyle g_noteStyle;
@@ -428,17 +581,29 @@ void loadFile(const char* filename) {
   // them back (note_format.h). The text is never longer than what was read, so it decodes straight in.
   char* buf = editorGetBuffer();
   NoteDecoder dec;
-  size_t bytesRead = 0;
+  size_t bytesRead = 0, rawRead = 0;
   for (;;) {
     const size_t room = TEXT_BUFFER_SIZE - 1 - bytesRead;
     if (room == 0) break;
     const int n = file.read(g_ioChunk, room < sizeof(g_ioChunk) ? room : sizeof(g_ioChunk));
     if (n <= 0) break;
+    rawRead += (size_t)n;
     bytesRead += dec.feed(g_ioChunk, (size_t)n, buf + bytesRead);
   }
   bytesRead += dec.finish(buf + bytesRead);
   buf[bytesRead] = '\0';
   file.close();
+
+  // A read that stopped early (card pulled, a bad sector) is not the note: opened, the next save would write the
+  // shortened text over the whole one. Nothing is opened, and the list says so.
+  if (rawRead != stored) {
+    DBG_PRINTF("Not opening %s: read %u of %u bytes\n", filename, (unsigned)rawRead, (unsigned)stored);
+    editorClear();
+    editorSetCurrentFile("");
+    g_loadReadFailed = true;
+    if (!sdCardAnswers()) sdMarkLost("open: card not readable");
+    return;
+  }
 
   editorSetCurrentFile(filename);
   g_noteStyle = dec.style();
@@ -495,7 +660,11 @@ bool saveCurrentFile(bool refreshList) {
 
   // Step 1: Write new content to .tmp (a .tmp left by a cut-short rename shares the note's clusters: truncating it
   // would free them, so it goes first, by name only).
-  sdRemoveLeftover(tmpPath, path);
+  if (!sdRemoveLeftover(tmpPath, path)) {
+    DBG_PRINTF("saveCurrentFile: could not clear %s, not saved\n", tmpPath);
+    if (!sdCardAnswers()) sdMarkLost("save: card not readable");
+    return false;
+  }
   auto file = SdMan.open(tmpPath, O_WRONLY | O_CREAT | O_TRUNC);
   if (!file) {
     DBG_PRINTF("saveCurrentFile: could not create tmp: %s\n", tmpPath);
@@ -541,6 +710,13 @@ bool saveCurrentFile(bool refreshList) {
     return false;
   }
 
+  // The read-back above can be answered from SdFat's cache (a one-sector note never leaves it), so it cannot tell a
+  // card pulled a moment ago. A sector read of the probe file goes to the card: only then is the note saved.
+  if (!sdCardAnswers()) {
+    sdMarkLost("save: card gone after the write");
+    return false;
+  }
+
   editorSetUnsavedChanges(false);
   clockPersist();   // keep timestamps monotonic across reboots
   if (refreshList) refreshFileList();
@@ -549,6 +725,7 @@ bool saveCurrentFile(bool refreshList) {
 }
 
 void createNewFile() {
+  g_styleFile[0] = '\0';   // the new note is plain LF, whatever name it gets
   editorClear();
   editorSetCurrentFile("");       // filename derived from title when user confirms
   editorSetCurrentTitle("Untitled");
@@ -556,12 +733,16 @@ void createNewFile() {
 }
 
 // Rename a file on disk to match a new title and format (ext ".txt" or ".md"), updating editor state if needed.
-void updateFileTitle(const char* filename, const char* newTitle, const char* ext) {
+bool updateFileTitle(const char* filename, const char* newTitle, const char* ext) {
   char newFilename[MAX_FILENAME_LEN];
   titleToFilename(newTitle, ext, newFilename, MAX_FILENAME_LEN);
   // Same title and format: the name is already right (a unique name would add _2 against the note itself).
-  if (strcasecmp(newFilename, filename) != 0) deriveUniqueFilename(newTitle, ext, newFilename, MAX_FILENAME_LEN);
+  if (strcasecmp(newFilename, filename) != 0 && !deriveUniqueFilename(newTitle, ext, newFilename, MAX_FILENAME_LEN)) {
+    refreshFileList();   // no free name: the note keeps its old one
+    return false;
+  }
 
+  bool ok = true;
   if (strcasecmp(newFilename, filename) != 0) {
     char oldPath[320], newPath[320];
     snprintf(oldPath, sizeof(oldPath), "/notes/%s", filename);
@@ -571,6 +752,7 @@ void updateFileTitle(const char* filename, const char* newTitle, const char* ext
     const bool onCard = SdMan.exists(oldPath);
     const bool moved = !onCard || SdMan.rename(oldPath, newPath);
     if (!moved) {
+      ok = false;
       DBG_PRINTF("updateFileTitle: could not rename %s to %s\n", filename, newFilename);
       if (!sdCardAnswers()) sdMarkLost("rename: card gone");
     } else if (onCard) {
@@ -578,9 +760,11 @@ void updateFileTitle(const char* filename, const char* newTitle, const char* ext
       char oldBak[336], newBak[336];
       snprintf(oldBak, sizeof(oldBak), "%s.bak", oldPath);
       snprintf(newBak, sizeof(newBak), "%s.bak", newPath);
-      if (SdMan.exists(oldBak)) {
-        sdRemoveLeftover(newBak, newPath);
-        SdMan.rename(oldBak, newBak);
+      // If it cannot follow, it goes: a .bak under the old name is never listed or cleaned up, and a new note of
+      // that name would take it as its own backup.
+      if (SdMan.exists(oldBak) && !(sdRemoveLeftover(newBak, newPath) && SdMan.rename(oldBak, newBak))) {
+        DBG_PRINTF("updateFileTitle: the backup did not follow %s\n", newFilename);
+        sdRemoveLeftover(oldBak, newPath);
       }
     }
 
@@ -592,14 +776,37 @@ void updateFileTitle(const char* filename, const char* newTitle, const char* ext
   }
 
   refreshFileList();
+  return ok;
 }
 
-void deleteFile(const char* filename) {
+static bool removeNote(const char* filename) {
   char path[320], bakPath[336];
   snprintf(path, sizeof(path), "/notes/%s", filename);
   snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
-  sdRemoveLeftover(bakPath, path);   // first: a .bak twin of the note must not free the note's clusters twice
-  SdMan.remove(path);
+  // First: a .bak twin of the note must not free the note's clusters twice. If its name cannot go, nothing is removed.
+  if (!sdRemoveLeftover(bakPath, path)) {
+    DBG_PRINTF("deleteFile: could not clear %s, not deleted\n", bakPath);
+    return false;
+  }
+  const bool ok = SdMan.remove(path);
+  if (ok && strcmp(g_styleFile, filename) == 0) g_styleFile[0] = '\0';   // a new note of this name starts as plain LF
+  DBG_PRINTF("Deleted: %s%s\n", filename, ok ? "" : " (FAILED)");
+  return ok;
+}
+
+void deleteFile(const char* filename) {
+  if (removeNote(filename)) cloud::onNotesDeleted(&filename, 1);   // the next sync removes it from the cloud too
   refreshFileList();
-  DBG_PRINTF("Deleted: %s\n", filename);
+}
+
+int deleteMarkedNotes() {
+  const std::vector<std::string> names = g_marks;
+  g_marks.clear();
+  std::vector<const char*> gone;
+  for (const auto& name : names)
+    if (removeNote(name.c_str())) gone.push_back(name.c_str());
+  // Deleted on purpose: the next sync removes them from the cloud even when they are most of the notes.
+  cloud::onNotesDeleted(gone.data(), (int)gone.size());
+  refreshFileList();
+  return (int)gone.size();
 }

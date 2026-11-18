@@ -28,6 +28,9 @@ struct StateEntry {
   std::string remoteRev;
   uint32_t syncedCrc = 0;
   uint32_t syncedSize = 0;
+  // Deleted on this device by the user (the notes list), not yet removed from the cloud: the mass-deletion guard
+  // lets these through. Any new record for the name (upload, download) starts without it.
+  bool deletedHere = false;
 };
 
 enum class ActionType : uint8_t {

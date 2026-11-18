@@ -99,6 +99,9 @@ class SyncEngine {
   bool settled(const std::string& name) const;
   void cancel();
   void signOut();                      // forget the tokens on this device
+  // The user deleted these notes on this device: their sync records say so, and the next sync removes them from the
+  // cloud even when they are most of the notes (the mass-deletion guard holds only deletions nobody asked for).
+  void markDeletedHere(const std::vector<std::string>& names);
   void step();                         // call from the main loop; never blocks
   bool busy() const;                   // a run is in progress
   bool finished() const { return phase_ == Phase::Done || phase_ == Phase::Failed; }
@@ -145,6 +148,7 @@ class SyncEngine {
   std::string uniqueConflictName(const std::string& name);
   const RemoteFile* findRemote(const std::string& name) const;
   const LocalFile* findLocal(const std::string& name) const;
+  bool localChangedSinceScan(const std::string& name);
   bool transportFailed(const HttpResponse& r);
   void failFromStatus(const HttpResponse& r, const std::string& what);
 
@@ -176,6 +180,8 @@ class SyncEngine {
   // timers
   bool waiting_ = false;
   uint32_t wakeAt_ = 0;
+  bool busyWaiting_ = false;   // issue() is waiting for the transport to finish a request given up on
+  uint32_t busySince_ = 0;
   std::function<void()> wakeFn_;
 
   // sign-in

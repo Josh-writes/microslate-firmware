@@ -291,6 +291,78 @@ static void testMassDeleteGuard() {
   CHECK(v.ok() && r2.deletedRemote == 0 && v.cloud.files.size() == 10);
 }
 
+// Notes the user deleted on the device (the notes list marks them) leave the cloud even when they are most of the
+// notes; deletions nobody asked for are still held, also when both happen in one sync. A cloud edit still wins.
+static void testDeletedHereIsNotHeld() {
+  {
+    World w;
+    w.signedIn();
+    for (int i = 0; i < 10; i++) w.disk.notes["n" + std::to_string(i) + ".txt"] = body(i);
+    w.sync();
+    std::vector<std::string> gone;
+    for (int i = 1; i < 10; i++) {
+      const std::string n = "n" + std::to_string(i) + ".txt";
+      w.disk.notes.erase(n);
+      gone.push_back(n);
+    }
+    w.eng->markDeletedHere(gone);
+    CHECK(w.disk.state.find("\"del\":1") != std::string::npos);   // the mark is on the card
+    w.build();                                                     // and survives a restart
+    auto r = w.sync();
+    CHECK(w.ok() && r.deletedRemote == 9 && r.held == 0);
+    CHECK(w.cloud.files.size() == 1 && w.cloud.files.count("n0.txt"));
+  }
+  {
+    World w;   // 2 deleted on purpose, 6 lost without a word: the 2 go, the 6 are held
+    w.signedIn();
+    for (int i = 0; i < 10; i++) w.disk.notes["n" + std::to_string(i) + ".txt"] = body(i);
+    w.sync();
+    w.disk.notes.erase("n0.txt");
+    w.disk.notes.erase("n1.txt");
+    w.eng->markDeletedHere({"n0.txt", "n1.txt"});
+    for (int i = 2; i < 8; i++) w.disk.notes.erase("n" + std::to_string(i) + ".txt");
+    auto r = w.sync();
+    CHECK(w.ok() && r.deletedRemote == 2 && r.held == 6);
+    CHECK(w.cloud.files.size() == 8 && !w.cloud.files.count("n0.txt") && w.cloud.files.count("n2.txt"));
+  }
+  {
+    World w;   // deleted here on purpose, edited in the cloud meanwhile: the edit comes back, without the mark
+    w.signedIn();
+    for (int i = 0; i < 6; i++) w.disk.notes["n" + std::to_string(i) + ".txt"] = body(i);
+    w.sync();
+    std::vector<std::string> gone;
+    for (int i = 0; i < 6; i++) {
+      w.disk.notes.erase("n" + std::to_string(i) + ".txt");
+      gone.push_back("n" + std::to_string(i) + ".txt");
+    }
+    w.eng->markDeletedHere(gone);
+    w.cloud.put("n5.txt", body(50));
+    auto r = w.sync();
+    CHECK(w.ok() && r.deletedRemote == 5 && r.downloaded == 1 && r.held == 0);
+    CHECK(w.disk.notes.count("n5.txt") && w.disk.notes["n5.txt"] == body(50));
+    CHECK(w.disk.state.find("\"del\":1") == std::string::npos);
+  }
+}
+
+// A request that never answers is timed out; the HTTPS task can stay busy finishing it for a while. The next request
+// waits for it instead of failing the sync with "Network is busy" (E1001, 2026-11-19: OneDrive deletes stalled).
+static void testBusyTransportAfterTimeoutWaits() {
+  World w;
+  w.signedIn();
+  for (int i = 0; i < 6; i++) w.disk.notes["n" + std::to_string(i) + ".txt"] = body(i);
+  w.sync();
+  w.disk.notes.erase("n1.txt");
+  w.disk.notes.erase("n2.txt");
+  w.cloud.hangNext = 1;           // the first cloud delete hangs
+  w.cloud.hangMethod = "DELETE";
+  w.cloud.busyAfterCancel = 20;   // and keeps the transport busy for 20 tries (~10 s) after the timeout
+  auto r = w.sync();
+  CHECK(w.ok() && r.deletedRemote == 1 && r.errors == 1);   // the timed-out delete failed, the run went on
+  auto r2 = w.sync();                                         // and the next sync finishes it
+  CHECK(w.ok() && r2.deletedRemote == 1 && r2.errors == 0);
+  CHECK(w.cloud.files.size() == 4);
+}
+
 // ---- hostile / odd cloud content --------------------------------------------------------------------------------
 
 static void testRemoteNamesAndFolders() {
@@ -605,6 +677,59 @@ static void testPriorityBeforeThePlan() {
   CHECK(w.ok() && w.cloud.files["mine.txt"].content == body(9));
 }
 
+// The plan comes from the scan, and the editor autosaves during a background sync: a note saved after the scan read
+// it must not be overwritten (Download) or trashed (DeleteLocal) on the scan's word.
+static void scanThenEdit(World& w, const std::function<void()> edit) {
+  w.eng->startSync();
+  stepUntil(w, [&] { return w.eng->phase() == SyncEngine::Phase::Scanning; });
+  for (int i = 0; i < 3; i++) { w.clock.ms += 100; w.eng->step(); }   // a.txt (first by name) is read
+  CHECK(w.eng->phase() == SyncEngine::Phase::Scanning);                // the z*.txt notes are still to come
+  edit();
+  w.run();
+}
+
+static void testSavedAfterScanIsKept() {
+  {  // the cloud changed it, and so did the writer after the scan: both copies are kept
+    World w;
+    w.signedIn();
+    w.disk.notes["a.txt"] = "base";
+    for (int i = 0; i < 8; i++) w.disk.notes["z" + std::to_string(i) + ".txt"] = body(i);
+    w.sync();
+    w.cloud.put("a.txt", "cloud edit");
+    scanThenEdit(w, [&] { w.disk.notes["a.txt"] = "saved after the scan"; });
+    CHECK(w.ok() && w.eng->result().conflicts == 1 && w.eng->result().downloaded == 0);
+    CHECK(w.disk.notes["a.txt"] == "cloud edit");
+    CHECK(w.disk.notes["a_device.txt"] == "saved after the scan");
+    CHECK(w.cloud.files["a_device.txt"].content == "saved after the scan");
+  }
+  {  // deleted in the cloud, but saved here after the scan: kept, and the next sync puts it back in the cloud
+    World w;
+    w.signedIn();
+    w.disk.notes["a.txt"] = "base";
+    for (int i = 0; i < 8; i++) w.disk.notes["z" + std::to_string(i) + ".txt"] = body(i);
+    w.sync();
+    w.cloud.files.erase("a.txt");
+    scanThenEdit(w, [&] { w.disk.notes["a.txt"] = "saved after the scan"; });
+    CHECK(w.ok() && w.eng->result().held == 1 && w.eng->result().deletedLocal == 0);
+    CHECK(w.disk.notes["a.txt"] == "saved after the scan" && w.disk.trash.empty());
+    auto r = w.sync();
+    CHECK(w.ok() && r.uploaded == 1 && w.cloud.files["a.txt"].content == "saved after the scan");
+  }
+  {  // unchanged after the scan: the download and the delete still happen
+    World w;
+    w.signedIn();
+    w.disk.notes["a.txt"] = "base";
+    w.disk.notes["b.txt"] = "bee";
+    for (int i = 0; i < 8; i++) w.disk.notes["z" + std::to_string(i) + ".txt"] = body(i);
+    w.sync();
+    w.cloud.put("a.txt", "cloud edit");
+    w.cloud.files.erase("b.txt");
+    auto r = w.sync();
+    CHECK(w.ok() && r.downloaded == 1 && r.deletedLocal == 1 && r.conflicts == 0);
+    CHECK(w.disk.notes["a.txt"] == "cloud edit" && !w.disk.notes.count("b.txt"));
+  }
+}
+
 int main() {
   testSignIn();
   testSignInFailures();
@@ -616,6 +741,8 @@ int main() {
   testDeleteVersusChange();
   testLostStateNeverDeletes();
   testMassDeleteGuard();
+  testDeletedHereIsNotHeld();
+  testBusyTransportAfterTimeoutWaits();
   testRemoteNamesAndFolders();
   testFormatSwitchIsARename();
   testPaging();
@@ -634,6 +761,7 @@ int main() {
   testUtf8Names();
   testPrioritizedNoteGoesNext();
   testPriorityBeforeThePlan();
+  testSavedAfterScanIsKept();
   printf("%d checks, %d failed\n", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }

@@ -174,6 +174,7 @@ static bool applyHistory(bool (*step)(edhist::Change*)) {
   selectionAnchor = -1;
   replaceRaw(ch.at, ch.oldLen, ch.newText, ch.newLen);
   cursorPosition = std::max(0, std::min(ch.cursor, (int)textLength));
+  edhist::breakGroup();   // typing after an undo or redo is a step of its own
   editorRecalculateLines();
   ensureCursorVisible(storedVisibleLines);
   return true;
@@ -282,6 +283,7 @@ void editorLoadBuffer(size_t length) {
   }
 #endif
   edhist::clear();   // another note opened: nothing to undo
+  if (length > TEXT_BUFFER_SIZE - 1) length = TEXT_BUFFER_SIZE - 1;   // room for the terminator
   textLength = length;
   textBuffer[textLength] = '\0';
   cursorPosition = (int)textLength;  // Start at end
@@ -391,8 +393,10 @@ void editorDeleteForward() {
 }
 
 // Called at the start of a cursor move: extend=true arms/keeps the selection
-// anchor; extend=false drops any selection.
+// anchor; extend=false drops any selection. A moved cursor also ends the undo word (edit_history.h): typing after
+// the cursor went away and came back is a step of its own.
 static void updateSelectionAnchor(bool extend) {
+  edhist::breakGroup();
   if (extend) {
     if (selectionAnchor < 0) selectionAnchor = cursorPosition;
   } else {
@@ -406,6 +410,7 @@ void editorMoveCursorLeft(bool extend) {
     int lo, hi;
     editorGetSelectionRange(&lo, &hi);
     selectionAnchor = -1;
+    edhist::breakGroup();
     cursorPosition = lo;
     editorRecalculateLines();
     ensureCursorVisible(storedVisibleLines);
@@ -424,6 +429,7 @@ void editorMoveCursorRight(bool extend) {
     int lo, hi;
     editorGetSelectionRange(&lo, &hi);
     selectionAnchor = -1;
+    edhist::breakGroup();
     cursorPosition = hi;
     editorRecalculateLines();
     ensureCursorVisible(storedVisibleLines);
@@ -540,6 +546,7 @@ bool editorGetWordBounds(int pos, int* lo, int* hi) {
 bool editorSelectWordAt(int pos) {
   int lo, hi;
   if (!editorGetWordBounds(pos, &lo, &hi)) return false;
+  edhist::breakGroup();
   selectionAnchor = lo;
   cursorPosition = hi;
   editorRecalculateLines();
@@ -548,6 +555,7 @@ bool editorSelectWordAt(int pos) {
 }
 
 void editorSelectRange(int anchor, int cursor) {
+  edhist::breakGroup();
   selectionAnchor = snapToBoundary(anchor);
   cursorPosition = snapToBoundary(cursor);
   editorRecalculateLines();
@@ -582,6 +590,7 @@ bool editorGetSelectionRange(int* lo, int* hi) {
 
 void editorSelectAll() {
   if (textLength == 0) return;
+  edhist::breakGroup();
   selectionAnchor = 0;
   cursorPosition = (int)textLength;
   editorRecalculateLines();
@@ -620,20 +629,26 @@ bool editorFindNext(const char* query) {
   int qlen = (int)strlen(query);
   if (qlen > (int)textLength) return false;
 
-  // Search forward from the caret, then wrap to the start. Plain byte compare is
-  // UTF-8 safe: the query's bytes only match a whole character's bytes in the buffer.
+  // Search forward from the caret, then wrap to the start. A hit must start and end on a character boundary: a query
+  // that ends inside a character (a cut-short accented letter) would leave the caret mid-character, and the next key
+  // would split it.
+  auto hitAt = [&](int i) {
+    return memcmp(textBuffer + i, query, qlen) == 0 && !isUtf8ContinuationByte((unsigned char)textBuffer[i]) &&
+           (i + qlen == (int)textLength || !isUtf8ContinuationByte((unsigned char)textBuffer[i + qlen]));
+  };
   int from = cursorPosition;
   int match = -1;
   for (int i = from; i + qlen <= (int)textLength; i++) {
-    if (memcmp(textBuffer + i, query, qlen) == 0) { match = i; break; }
+    if (hitAt(i)) { match = i; break; }
   }
   if (match < 0) {
     for (int i = 0; i + qlen <= from && i + qlen <= (int)textLength; i++) {
-      if (memcmp(textBuffer + i, query, qlen) == 0) { match = i; break; }
+      if (hitAt(i)) { match = i; break; }
     }
   }
   if (match < 0) return false;
 
+  edhist::breakGroup();
   selectionAnchor = match;             // highlight the hit via the selection renderer
   cursorPosition = match + qlen;       // caret past the match so Enter finds the next
   editorRecalculateLines();

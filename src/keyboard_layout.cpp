@@ -292,7 +292,10 @@ bool keyboardLayoutSlotShown(const char* text) {
     if (c >= 0xF0) { cp = c & 0x07; n = 4; }
     else if (c >= 0xE0) { cp = c & 0x0F; n = 3; }
     else if (c >= 0xC0) { cp = c & 0x1F; n = 2; }
-    for (int k = 1; k < n && p[k]; k++) cp = (cp << 6) | (uint8_t(p[k]) & 0x3F);
+    for (int k = 1; k < n; k++) {
+      if (!p[k]) { n = k; break; }   // cut short: never step past the end of the string
+      cp = (cp << 6) | (uint8_t(p[k]) & 0x3F);
+    }
     if (cp >= 0x20 && !uiFontHasGlyph(cp)) return false;
     p += n;
   }

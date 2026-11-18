@@ -112,6 +112,7 @@ bool g_pushPending = false;
 bool g_pushImmediate = false;
 bool g_sdLost = false;       // card pulled: no sync work at all
 bool g_writeDirty = false;   // the open note was autosaved since the last sync started
+bool g_runHadWrites = false; // the running sync started with an edit to push: a failed run keeps it owed
 uint32_t g_lastStartMs = 0;
 uint32_t g_lingerEnd = 0;
 uint32_t g_phaseStart = 0;
@@ -141,20 +142,6 @@ bool syncWorking() {
 void listMessage(const char* fmt, const char* name) {
   snprintf(g_listMsg, sizeof(g_listMsg), fmt, name);
   g_listMsgUntil = millis() + kListMsgMs;
-}
-
-// The sync changed the notes on the card: read the list again, keeping the highlight on the same note (a new note
-// at the top would otherwise move it onto another one).
-void refreshListKeepingSelection() {
-  char sel[MAX_FILENAME_LEN] = "";
-  if (selectedFileIndex >= 1 && selectedFileIndex <= getFileCount())
-    snprintf(sel, sizeof(sel), "%s", getFileList()[selectedFileIndex - 1].filename);
-  refreshFileList();
-  if (!sel[0]) return;
-  const int n = getFileCount();
-  for (int i = 0; i < n; i++)
-    if (strcmp(getFileList()[i].filename, sel) == 0) { selectedFileIndex = i + 1; return; }
-  if (selectedFileIndex > n) selectedFileIndex = n;
 }
 
 ScreenModel g_model;
@@ -242,7 +229,10 @@ void startEngine() {
   g_lastFailed = false;
   g_lastMessage[0] = '\0';
   if (g_job == Job::SignIn) g_engine->startSignIn();
-  else { g_pushPending = false; g_pushImmediate = false; g_writeDirty = false; g_engine->startSync(); }
+  else {
+    g_runHadWrites = g_pushPending || g_writeDirty;
+    g_pushPending = false; g_pushImmediate = false; g_writeDirty = false; g_engine->startSync();
+  }
   g_offlineWaitMs = 0;   // online again: automatic syncs run normally
   g_phase = Phase::Running;
   g_lastStartMs = millis();
@@ -331,13 +321,16 @@ void onEngineDone() {
     if (!res.message.empty()) snprintf(g_lastMessage, sizeof(g_lastMessage), "%s", res.message.c_str());
     g_lastEpoch = g_clock->epochNow();
     saveLast();
-    if (res.downloaded || res.deletedLocal || res.conflicts) refreshListKeepingSelection();   // notes changed on the card
+    if (res.downloaded || res.deletedLocal || res.conflicts) refreshFileListKeepingSelection();   // notes changed on the card
     listMessage("%s synced", pname());
   } else {
     snprintf(g_lastMessage, sizeof(g_lastMessage), "%s", res.message.c_str());
     snprintf(g_lastSummary, sizeof(g_lastSummary), "%s", res.message.c_str());
     if (res.error == SyncEngine::Error::SignInExpired || res.error == SyncEngine::Error::NotSignedIn)
       g_signedCache = false;
+    // The edit this run was to push may not have reached the cloud: still owed, so the next pause tries again and
+    // the backup-overdue timer keeps counting.
+    if (g_runHadWrites) g_writeDirty = true;
     listMessage("%s not synced", pname());
   }
   g_engine->acknowledge();
@@ -653,6 +646,13 @@ void onSdBack() {
   if (g_inited && g_signedCache) g_writeDirty = true;   // the note saved on return still has to reach OneDrive
 }
 
+void onNotesDeleted(const char* const* names, int n) {
+  if (!g_inited || g_sdLost || n <= 0) return;
+  std::vector<std::string> v(names, names + n);
+  for (int i = 0; i < g_providerCount; i++)
+    if (g_bundles[i].engine) g_bundles[i].engine->markDeletedHere(v);
+}
+
 void flushBeforeSleep() {
   if (!g_inited || g_sdLost ||!g_settings.autoClose || !g_signedCache) return;
   if (!g_pushPending && !g_engine->busy()) return;
@@ -748,7 +748,8 @@ static void listKey(uint8_t key) {
     selectProvider(g_listSel);
     g_listMode = false;
     startJob(g_signedCache ? Job::Sync : Job::SignIn);
-  } else if (key == HID_KEY_BAR0 + 2) {   // the bar's second button arrives as Enter, so Sign out sits on the third
+  } else if (key == HID_KEY_BAR0 + 2 || key == HID_KEY_O) {   // the bar's second button arrives as Enter, so Sign out
+                                                                  // sits on the third; O on a keyboard
     if (!providerSigned(g_listSel)) return;
     g_confirmSignOut = g_listSel;   // its own page; nothing is forgotten yet
   } else {
@@ -758,7 +759,9 @@ static void listKey(uint8_t key) {
 }
 
 static void confirmKey(uint8_t key) {
-  if (key == HID_KEY_BAR0 + 3) {   // Sign out sits where nothing on the list sits, so a repeated tap cannot reach it
+  // Sign out sits where nothing on the list sits, so a repeated tap cannot reach it. A keyboard confirms with Y; the
+  // button-only E1001 (no bar) with Select.
+  if (key == HID_KEY_BAR0 + 3 || key == HID_KEY_Y || (kClassicUi && key == HID_KEY_ENTER)) {
     signOutProvider(g_confirmSignOut);
     g_confirmSignOut = -1;
     dirty();
@@ -846,7 +849,7 @@ bool screenKey(uint8_t key, uint8_t mods) {
       return false;
     }
   }
-  const bool switchKey = key == HID_KEY_BAR0 + 3 || key == HID_KEY_C;
+  const bool switchKey = key == HID_KEY_BAR0 + 3 || key == HID_KEY_C || key == HID_KEY_O;   // several: O signs out from the list
   if (g_providerCount > 1 && switchKey) { openList(); return false; }   // works even while a sync runs
   if (working) return false;
   if (g_engine->finished()) g_engine->acknowledge();
@@ -872,7 +875,8 @@ bool screenKey(uint8_t key, uint8_t mods) {
     dirty();
     return false;
   }
-  if (key == HID_KEY_BAR0 + 3 && g_providerCount == 1 && g_signedCache) {   // single cloud: Sign out, on its own page
+  if ((key == HID_KEY_BAR0 + 3 || key == HID_KEY_O) && g_providerCount == 1 && g_signedCache) {   // single cloud: Sign
+                                                                                                  // out, on its own page
     g_confirmSignOut = g_active;
     dirty();
     return false;
@@ -895,6 +899,7 @@ const ScreenModel& screenModel() {
     line("Sign out of %s on this device?", who);
     line("Your notes stay on this device and in");
     line("the cloud. You can sign in again later.");
+    line("%s", kClassicUi ? "Select signs out, Back cancels." : "Y signs out, Esc cancels.");
     m.bar[0] = "Cancel";
     m.bar[3] = "Sign out";
     return m;
@@ -1015,6 +1020,7 @@ const ScreenModel& screenModel() {
   else snprintf(autoLabel, sizeof(autoLabel), "Auto: on");
   m.bar[2] = autoLabel;
   m.bar[3] = several ? "Switch cloud" : "Sign out";
+  if (kClassicUi) line(several ? "Keys: A auto-sync, C switch cloud, O sign out" : "Keys: A auto-sync, O sign out");
   return m;
 }
 

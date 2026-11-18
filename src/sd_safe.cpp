@@ -119,7 +119,7 @@ bool sdWriteSafely(const char* path, const void* data, size_t len, bool keepBack
   char tmp[352];
   if (!withSuffix(tmp, sizeof(tmp), path, ".tmp")) return false;
   // A .tmp left by a cut-short rename shares the file's clusters: truncating it would free them, so it goes first.
-  sdRemoveLeftover(tmp, path);
+  if (!sdRemoveLeftover(tmp, path)) return false;
   auto f = SdMan.open(tmp, O_WRONLY | O_CREAT | O_TRUNC);
   if (!f) return false;
   const uint8_t* bytes = static_cast<const uint8_t*>(data);

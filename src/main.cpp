@@ -25,6 +25,7 @@
 #include "input_handler.h"
 #include "text_editor.h"
 #include "file_manager.h"
+#include "wall_clock.h"
 #include "ui_renderer.h"
 #include "spell/spell_service.h"
 #include "safety_probe.h"
@@ -101,6 +102,7 @@ int findBufferLen = 0;
 bool darkMode = false;
 bool cleanMode = false;
 bool deleteConfirmPending = false;
+bool deleteSelectMode = false;   // the notes list is ticking notes to delete (Delete opens it)
 WritingMode writingMode = WritingMode::NORMAL;
 FontSize fontSize = FontSize::LARGE;
 bool showWordCount = true;
@@ -149,9 +151,9 @@ static void updateScreen() {
     int avgCharW = renderer.getTextAdvanceX(editorFontId(fontSize), kSample) / (int)strlen(kSample);
     if (avgCharW > 0) charsPerLine = textAreaWidth / avgCharW;
   }
-  editorSetCharsPerLine(charsPerLine);
   {
-    // Wrap by real glyph widths so a word that fits is never cut off at the edge
+    // Wrap by real glyph widths so a word that fits is never cut off at the edge. Set before the chars-per-line
+    // call below, whose layout then uses the new widths (a font change wraps right on its first frame).
     static uint16_t advW[128];
     static int advFont = -1;
     int fid = editorFontId(fontSize);
@@ -166,12 +168,17 @@ static void updateScreen() {
     int fb = renderer.getTextAdvanceX(fid, "n");
     editorSetPixelWrap(renderer.getScreenWidth() - 20 - 6, advW, fb);
   }
+  editorSetCharsPerLine(charsPerLine);
 
   switch (currentState) {
     case UIState::MAIN_MENU:         drawMainMenu(renderer, gpio); break;
     case UIState::FILE_BROWSER:
       if (cloud::browseHoldActive()) drawCloudNotice(renderer, gpio, cloud::holdNotice());
-      else if (loadRefusedBytes()) {
+      else if (loadReadFailed()) {
+        drawCloudNotice(renderer, gpio, "This note could not be read",
+                        "The SD card stopped before the end of the note.\nThe file has not been changed.\n\n"
+                        "Press any key to go back.");
+      } else if (loadRefusedBytes()) {
         // A note over the editor limit was not opened (file_manager.cpp, loadFile).
         const unsigned limKb = (unsigned)(TEXT_BUFFER_SIZE / 1024);
         const unsigned kb = (unsigned)((loadRefusedBytes() + 1023) / 1024);
@@ -260,6 +267,7 @@ void setup() {
 
   editorInit();
   inputSetup();
+  wallclock::begin();   // the clock chip's time, before the card: notes are dated from it
   fileManagerSetup();
   cloud::init();   // OneDrive sync service (idle until the user connects an account)
   sleepscr::init();   // sleep screen choice (Stock or My pictures)
@@ -319,6 +327,7 @@ void setup() {
 
 // Enter deep sleep - matches crosspoint pattern
 void enterDeepSleep(SleepReason reason) {
+  if (fwupdate::installing()) return;   // the install finishes and restarts on its own; sleeping would abandon it
   DBG_PRINTF("Entering deep sleep (%s)...\n",
              reason == SleepReason::POWER_LONGPRESS ? "power button" : "idle timeout");
   light::off();
@@ -349,12 +358,36 @@ void enterDeepSleep(SleepReason reason) {
   // Will not return - device is asleep
 }
 
-// The open note has text that cannot be saved because the SD card is gone. Saves it first when it can (a failed save
-// is how the editor finds out the card was pulled), so false also means "saved, safe to leave".
-static bool unsavedWithoutCard() {
-  if (currentState != UIState::TEXT_EDITOR || !editorHasUnsavedChanges()) return false;
+// The open note has text the card does not hold, even after one more save: the card is gone, or it is there but did
+// not take the save (full, a bad sector, a read-back that differs). False means "saved, safe to leave".
+static bool noteLeftUnsaved() {
+  if (!editorHasUnsavedChanges() || editorGetLength() == 0) return false;
   if (!sdLost()) saveCurrentFile();
-  return sdLost() && editorHasUnsavedChanges();
+  return editorHasUnsavedChanges();
+}
+
+// Back to the editor with the "not saved" screen (editorSdWarn: 1 any key, 2 power again, 3 Back again).
+static void showUnsavedWarning(uint8_t level) {
+  editorSdWarn = level;
+  currentState = UIState::TEXT_EDITOR;
+  screenDirty = true;
+}
+
+// The short power press and the touch home swipe: the open note is saved, the screen is closed the way its own Back
+// closes it (Wi-Fi off, the update check stopped), then the main menu. A note that could not be saved keeps the
+// editor open with the warning; a firmware install keeps its screen until it restarts.
+void goToMainMenu() {
+  if (fwupdate::installing()) return;
+  if (noteLeftUnsaved()) {
+    showUnsavedWarning(1);
+    return;
+  }
+  if (currentState == UIState::WIFI_SYNC) wifiSyncStop();
+  else if (currentState == UIState::FW_UPDATE) fwupdate::key(HID_KEY_ESCAPE);   // its Back: stops the check, Wi-Fi off
+  if (currentState != UIState::MAIN_MENU) {
+    currentState = UIState::MAIN_MENU;
+    screenDirty = true;
+  }
 }
 
 // Translate physical button presses to HID key codes
@@ -430,10 +463,10 @@ static void processPhysicalButtons() {
   if (btnPower && powerHeld && !sleepTriggered) {
     if (millis() - powerPressStart > 3000) {
       sleepTriggered = true;
-      // Card gone with unsaved text: the first hold warns, a second one (while the warning shows) turns off anyway.
-      if (editorSdWarn != 2 && unsavedWithoutCard()) {
-        editorSdWarn = 2;
-        screenDirty = true;
+      // Text not saved (card gone or failing): the first hold warns, a second one (while the warning shows) turns off
+      // anyway.
+      if (editorSdWarn != 2 && noteLeftUnsaved()) {
+        showUnsavedWarning(2);
         return;
       }
       enterDeepSleep(SleepReason::POWER_LONGPRESS);
@@ -446,16 +479,7 @@ static void processPhysicalButtons() {
     unsigned long duration = millis() - powerPressStart;
     powerHeld = false;
 
-    if (!sleepTriggered && duration > 50 && duration < 1000) {
-      // Short press - go to main menu (except when already there)
-      if (unsavedWithoutCard()) {   // the text could not be saved: stay in the editor and say why
-        editorSdWarn = 1;
-        screenDirty = true;
-      } else if (currentState != UIState::MAIN_MENU) {
-        currentState = UIState::MAIN_MENU;   // unsavedWithoutCard() saved the open note
-        screenDirty = true;
-      }
-    }
+    if (!sleepTriggered && duration > 50 && duration < 1000) goToMainMenu();   // short press
   }
 
   // Back button long-press for restart
@@ -472,10 +496,11 @@ static void processPhysicalButtons() {
   if (btnBack && backHeld && !restartTriggered) {
     if (millis() - backPressStart > 5000) {
       restartTriggered = true;
-      // Card gone with unsaved text: the first hold warns, a second one (while the warning shows) restarts anyway.
-      if (editorSdWarn != 3 && unsavedWithoutCard()) {
-        editorSdWarn = 3;
-        screenDirty = true;
+      // Text not saved (card gone or failing): the first hold warns, a second one (while the warning shows) restarts
+      // anyway. A firmware install is never cut by a restart.
+      if (fwupdate::installing()) return;
+      if (editorSdWarn != 3 && noteLeftUnsaved()) {
+        showUnsavedWarning(3);
         return;
       }
       DBG_PRINTLN("BACK held for 5s — restarting device...");
@@ -650,9 +675,26 @@ void loop() {
 
   // OneDrive sync: runs the engine and decides when to sync (idle save, note closed, notes list opened).
   cloud::loop();
+  fileManagerClockPoll();   // the internet time: on to the clock chip, notes dated ahead of it re-dated
   editorProfReport();
   if (currentState != UIState::TEXT_EDITOR && !renderer.isRefreshing()) fileManagerPoll();
   safetyProbePoll();   // timing builds only: the safety audit's serial commands
+  {
+    static UIState overlayPrev = UIState::MAIN_MENU;
+    if (currentState != overlayPrev) {
+      if (overlayPrev == UIState::TEXT_EDITOR && currentState != UIState::RENAME_FILE) {
+        editorFindMode = false;   // the next note must not open with the find bar taking its keys
+        findBufferLen = 0;
+        findBuffer[0] = '\0';
+      }
+      if (overlayPrev == UIState::FILE_BROWSER) {   // never a stale "Delete n notes?" or ticked list on return
+        deleteConfirmPending = false;
+        deleteSelectMode = false;
+        noteMarkAll(false);
+      }
+      overlayPrev = currentState;
+    }
+  }
   {
     static UIState cloudPrev = UIState::MAIN_MENU;
     if (currentState != cloudPrev) {
@@ -735,11 +777,17 @@ void loop() {
     // paragraphs don't hammer the SD. Shrinks the worst-case crash loss to a line.
     bool paraTrigger = editorHasParagraphBreakPending()
                     && (now - lastAutoSaveMs) > AUTO_SAVE_PARA_MIN_MS;
-    if (idleTrigger || capTrigger || paraTrigger) {
-      lastAutoSaveMs = now;
-      editorClearParagraphBreak();
-      saveCurrentFile(false);  // Skip refreshFileList — file list unchanged by content update
-      cloud::onAutosave();
+    static unsigned long lastFailMs = 0;
+    const bool retryWait = lastFailMs && now - lastFailMs < AUTO_SAVE_RETRY_MS;
+    if ((idleTrigger || capTrigger || paraTrigger) && !retryWait) {
+      if (saveCurrentFile(false)) {  // Skip refreshFileList — file list unchanged by content update
+        lastAutoSaveMs = now;
+        lastFailMs = 0;
+        editorClearParagraphBreak();
+        cloud::onAutosave();
+      } else {
+        lastFailMs = now | 1;
+      }
     }
   }
 
@@ -766,10 +814,15 @@ void loop() {
 
   uiprefs::saveIfChanged();   // NVS and the SD copy, only after a change
 
-  // Check for idle timeout (skip while WiFi sync is active)
-  if (!isWifiSyncActive() && !fwupdate::keepAwake() && millis() - lastActivityTime > IDLE_TIMEOUT
-      && !(sdLost() && currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges())) {
-    enterDeepSleep(SleepReason::IDLE_TIMEOUT);
+  // Check for idle timeout (skip while WiFi sync is active). Text the card does not hold (card gone, or a save that
+  // failed) keeps the device awake with the warning; it tries again after another idle period.
+  if (!isWifiSyncActive() && !fwupdate::keepAwake() && millis() - lastActivityTime > IDLE_TIMEOUT) {
+    if (noteLeftUnsaved()) {
+      if (!editorSdWarn) showUnsavedWarning(1);
+      registerActivity();
+    } else {
+      enterDeepSleep(SleepReason::IDLE_TIMEOUT);
+    }
   }
 
   // Adaptive delay with recently-active window for button responsiveness.

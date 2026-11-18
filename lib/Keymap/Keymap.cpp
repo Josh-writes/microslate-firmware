@@ -83,6 +83,17 @@ int utf8Encode(uint32_t cp, char* out) {
 }
 
 // The single code point of s, or 0 when s is empty or longer than one character.
+// Drops a UTF-8 character cut short at the end of s (snprintf cuts by bytes).
+void trimPartialUtf8(char* s) {
+  size_t len = strlen(s);
+  size_t start = len;
+  while (start > 0 && (uint8_t(s[start - 1]) & 0xC0) == 0x80) start--;   // back over continuation bytes
+  if (start == 0) { if (len) s[0] = '\0'; return; }
+  const uint8_t lead = uint8_t(s[start - 1]);
+  const size_t need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+  if (len - (start - 1) < need) s[start - 1] = '\0';
+}
+
 uint32_t singleCp(const char* s) {
   uint32_t cp = 0;
   int n = utf8Decode(s, cp);
@@ -555,7 +566,7 @@ const char* Typer::press(const Layout& l, uint8_t hid, uint8_t mods, bool capsLo
     memcpy(accent, pending_, sizeof(accent));
     pending_[0] = '\0';
     const char* own = l.composeOwn(accent, t);
-    if (own) { snprintf(out_, sizeof(out_), "%s", own); return out_; }
+    if (own) { snprintf(out_, sizeof(out_), "%s", own); trimPartialUtf8(out_); return out_; }
     // Built-in pairs: base letter + the accent's combining mark.
     const uint32_t mark = markOfAccent(singleCp(accent));
     const uint32_t base = singleCp(t);
@@ -575,6 +586,7 @@ const char* Typer::press(const Layout& l, uint8_t hid, uint8_t mods, bool capsLo
       return out_;
     }
     snprintf(out_, sizeof(out_), "%s%s", accent, t);
+    trimPartialUtf8(out_);   // a long layout value: never half a character into the note
     return out_;
   }
   if (dead) {

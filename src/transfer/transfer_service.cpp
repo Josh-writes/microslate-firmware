@@ -221,10 +221,39 @@ void sendNote(int i) {
   DBG_PRINTF("[XFER] sent %s%s%s\n", g_list[i].file, dl ? " (download)" : "", ok ? "" : " (stopped)");
 }
 
+// Wrong codes on a shared network: after kWrongCodesMax in a row, every code is refused for kCodeLockMs, so a script
+// cannot try the 4-character codes in a few hours. The right code resets the count. (On the hotspot, whoever joined
+// with its password is sent to the page anyway.)
+constexpr int kWrongCodesMax = 5;
+constexpr uint32_t kCodeLockMs = 30000;
+int g_wrongCodes = 0;
+uint32_t g_codeLockUntil = 0;
+
+// "/abcd..." where abcd has the length of a code: a guess at the code (not /favicon.ico and the like).
+bool codeAttempt(const std::string& path) {
+  if (path.size() < 1 + (size_t)kCodeLen || path[0] != '/') return false;
+  const size_t end = path.find('/', 1);
+  return (end == std::string::npos ? path.size() : end) - 1 == (size_t)kCodeLen;
+}
+
 void handleRequest() {
   registerActivity();   // the device sleeps on no activity as usual; a page in use counts as activity
   const std::string path = g_server->uri().c_str();
   const Request r = parse(path, g_code);
+  if (!g_hotspot) {
+    if (g_codeLockUntil && (int32_t)(millis() - g_codeLockUntil) < 0) {
+      sendPlain(429, "MicroSlate: too many wrong codes. Wait half a minute, then try again.");
+      return;
+    }
+    g_codeLockUntil = 0;
+    if (r.route != Route::Unknown) {
+      g_wrongCodes = 0;
+    } else if (codeAttempt(path) && ++g_wrongCodes >= kWrongCodesMax) {
+      DBG_PRINTLN("[XFER] too many wrong codes: refusing codes for 30 s");
+      g_wrongCodes = 0;
+      g_codeLockUntil = (millis() + kCodeLockMs) | 1;
+    }
+  }
   switch (r.route) {
     case Route::Page:
       g_server->sendHeader("Cache-Control", "no-store");
@@ -285,6 +314,8 @@ void startHotspot() {
   g_ssid = ssid;
   if (!WiFi.softAP(ssid, g_pass.c_str(), 1, 0, 4)) {
     DBG_PRINTLN("[XFER] hotspot did not start");
+    WiFi.mode(WIFI_OFF);
+    wifiSetHotspot(false);   // else cloud sync and saved-network Wi-Fi stay blocked until a restart
     g_error = "The hotspot did not start";
     g_phase = Phase::Failed;
     screenDirty = true;
@@ -317,6 +348,8 @@ void open(const char* noteFile, UIState backTo) {
   g_sent = 0;
   snapshot(noteFile);
   loadSecrets();
+  g_wrongCodes = 0;
+  g_codeLockUntil = 0;
   wifiHold(true);   // background sync must not switch Wi-Fi off under the page
   currentState = UIState::TRANSFER;
   DBG_PRINTF("[XFER] open: %s\n", g_what);

@@ -177,23 +177,30 @@ const char* install() {
 
     NetworkClient* stream = http.getStreamPtr();
     uint32_t lastData = millis();
+    size_t held = 0;   // bytes in buf not yet written: the start of the file, until its header is whole
     while (written < (size_t)total) {
       if (g_cancel.load()) { err = "Cancelled."; break; }
       const size_t want = std::min((size_t)4096, (size_t)total - written);
-      const int n = stream->available() ? stream->read(buf, want) : 0;
+      const int n = stream->available() ? stream->read(buf + held, want - held) : 0;
       if (n <= 0) {
         if (!stream->connected() || millis() - lastData > 30000) { err = "The download stopped. Try again."; break; }
         delay(5);
         continue;
       }
       lastData = millis();
-      // The first bytes are the image header: magic 0xE9, and the chip at offset 12 must be this one.
-      if (written == 0 && (n < 16 || buf[0] != 0xE9 || memcmp(buf + 12, runningHdr + 12, 2) != 0)) {
-        err = "This update is not for this device.";
-        break;
+      size_t len = held + (size_t)n;
+      if (written == 0) {
+        // A read can return less than the header (a short TLS record): keep collecting.
+        if (len < 16 && len < want) { held = len; continue; }
+        held = 0;
+        // The first bytes are the image header: magic 0xE9, and the chip at offset 12 must be this one.
+        if (len < 16 || buf[0] != 0xE9 || memcmp(buf + 12, runningHdr + 12, 2) != 0) {
+          err = "This update is not for this device.";
+          break;
+        }
       }
-      if (esp_ota_write(ota, buf, n) != ESP_OK) { err = "Could not write the update."; break; }
-      written += n;
+      if (esp_ota_write(ota, buf, len) != ESP_OK) { err = "Could not write the update."; break; }
+      written += len;
       g_pct.store((int)(written * 100 / (size_t)total));
     }
     if (err) break;
@@ -234,6 +241,17 @@ void startCheck() {
   if (!startTask(checkTask, "ms_update")) finish(Phase::Failed, "Not enough memory.");
 }
 
+void checkWhenOnline() {
+  if (WiFi.status() == WL_CONNECTED) {
+    startCheck();
+  } else if (wifiQuickBegin()) {
+    g_phase.store(Phase::Connecting);
+  } else {
+    setMessage("Add your Wi-Fi network in Settings > Wi-Fi first.");
+    g_phase.store(Phase::NoWifi);
+  }
+}
+
 void close() {
   g_cancel.store(true);
   g_phase.store(Phase::Idle);
@@ -262,19 +280,12 @@ void open() {
     g_phase.store(Phase::UpToDate);
     return;
   }
-  if (g_taskRunning.load()) {   // an earlier check is still finishing: take its answer
+  wifiHold(true);   // background sync's Wi-Fi off must not cut the check or the download
+  if (g_taskRunning.load()) {   // an earlier check is still finishing: take its answer (loop() asks again if it was lost)
     g_phase.store(Phase::Checking);
     return;
   }
-  wifiHold(true);   // background sync's Wi-Fi off must not cut the check or the download
-  if (WiFi.status() == WL_CONNECTED) {
-    startCheck();
-  } else if (wifiQuickBegin()) {
-    g_phase.store(Phase::Connecting);
-  } else {
-    setMessage("Add your Wi-Fi network in Settings > Wi-Fi first.");
-    g_phase.store(Phase::NoWifi);
-  }
+  checkWhenOnline();
 }
 
 void key(uint8_t k) {
@@ -298,6 +309,10 @@ void loop() {
   static int shownPct = -1;
   const Phase p = g_phase.load();
   if (p == Phase::Idle) { shown = p; return; }
+
+  // The screen was opened again while an earlier check was ending: its answer was dropped (finish() ran while the
+  // screen was closed). With no task left to answer, ask again.
+  if (p == Phase::Checking && !g_taskRunning.load()) checkWhenOnline();
 
   if (p == Phase::Connecting) {
     const QuickWifi q = wifiQuickPoll();
@@ -334,6 +349,11 @@ const View& view() {
 bool keepAwake() {
   const Phase p = g_phase.load();
   return p == Phase::Connecting || p == Phase::Checking || p == Phase::Installing || p == Phase::Done;
+}
+
+bool installing() {
+  const Phase p = g_phase.load();
+  return p == Phase::Installing || p == Phase::Done;
 }
 
 }  // namespace fwupdate

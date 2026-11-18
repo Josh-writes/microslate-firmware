@@ -33,6 +33,7 @@ extern bool autoReconnectEnabled;
 extern bool darkMode;
 extern bool cleanMode;
 extern bool deleteConfirmPending;
+extern bool deleteSelectMode;
 extern WritingMode writingMode;
 extern FontSize fontSize;
 extern bool showWordCount;
@@ -367,20 +368,24 @@ static void drawButtonBar(GfxRenderer& r, const BarButton (&btns)[4], bool tc, i
     // confirmation screens get a one-line hint instead.
     const uint8_t m = uiBarMask();
     if (m & 1) {
-      // Back on the left; the screen's one extra action (Forget / Scan), when it has one, on the right.
-      const bool extra = (m & 8) && btns[3].label && btns[3].label[0];
+      // Back on the left, then the screen's other actions (Forget / Scan, the notes' Rename / Delete / Transfer) in
+      // equal parts, in bar order: Down past the last row walks through them.
+      int idxs[4], n = 0;
+      for (int i = 0; i < 4; i++)
+        if (i == 0 || (((m >> i) & 1) && btns[i].label && btns[i].label[0])) idxs[n++] = i;
       const int lh = r.getLineHeight(LIST_FONT_B);
       clippedLine(r, 5, top - 3, sw - 5, top - 3, tc);
-      for (int slot = 0; slot < (extra ? 2 : 1); slot++) {
-        const int idx = slot == 0 ? 0 : 3;
+      const int part = (sw - 10) / n;
+      for (int slot = 0; slot < n; slot++) {
+        const int idx = idxs[slot];
         const bool sel = (focus == idx);
-        const int x = 5 + slot * ((sw - 10) / 2);
-        const int w = extra ? (sw - 10) / 2 - 3 : sw - 10;
+        const int x = 5 + slot * part;
+        const int w = n > 1 ? part - 3 : sw - 10;
         if (sel) clippedFillRect(r, x, top, w, BAR_H, tc);
-        else if (extra) r.drawRect(x, top, w, BAR_H, 1, tc);
+        else if (n > 1) r.drawRect(x, top, w, BAR_H, 1, tc);
         char lab[24];
         if (idx == 0) snprintf(lab, sizeof(lab), "< %s", (btns[0].label && btns[0].label[0]) ? btns[0].label : "Back");
-        else snprintf(lab, sizeof(lab), "%s", btns[3].label);
+        else snprintf(lab, sizeof(lab), "%s", btns[idx].label);
         drawClippedText(r, LIST_FONT_B, x + 10, top + (BAR_H - lh) / 2, lab, w - 20, sel ? !tc : tc);
       }
     } else if ((deleteConfirmPending || pairedForgetPending) && btns[0].label && btns[1].label) {
@@ -441,13 +446,15 @@ static void drawButtonBar(GfxRenderer& r, const BarButton (&btns)[4], bool tc, i
 // "Delete this note?" and the like: the question, what it is about, an optional warning, and Cancel / the action.
 // Takes over the list area of a list screen and presents the screen.
 static void drawConfirmPrompt(GfxRenderer& r, bool tc, const ListGeom& g, const char* question, const char* subject,
-                              const char* warning, const char* action) {
+                              const char* warning, const char* action, const char* hint = nullptr) {
   const int sw = r.getScreenWidth();
   const int y = g.top + 16;
   const int subjectY = y + r.getLineHeight(LIST_FONT_L) + 14;
+  const int warnY = subjectY + r.getLineHeight(LIST_FONT_B) + 14;
   drawClippedText(r, LIST_FONT_L, 20, y, question, sw - 40, tc, EpdFontFamily::BOLD);
   drawClippedText(r, LIST_FONT_B, 20, subjectY, subject, sw - 40, tc);
-  if (warning) drawClippedText(r, FONT_UI, 20, subjectY + r.getLineHeight(LIST_FONT_B) + 14, warning, sw - 40, tc);
+  if (warning) drawClippedText(r, FONT_UI, 20, warnY, warning, sw - 40, tc);
+  if (hint) drawClippedText(r, FONT_UI, 20, warnY + r.getLineHeight(FONT_UI) + 18, hint, sw - 40, tc, EpdFontFamily::BOLD);
   const BarButton bar[4] = {{"Cancel", true}, {action, true}, {nullptr, false}, {nullptr, false}};
   drawButtonBar(r, bar, tc, -1);
   r.beginRefresh(HalDisplay::FAST_REFRESH);
@@ -492,7 +499,7 @@ uint8_t uiBarMask() {
   if (CLASSIC) {
     // Only a "Back" row, on the screens that have list navigation.
     switch (currentState) {
-      case UIState::FILE_BROWSER:       return deleteConfirmPending ? 0 : (selectedFileIndex >= 1 ? 9 : 1);   // Back / Transfer
+      case UIState::FILE_BROWSER:       return 0;                                                // a key guide, no buttons
       case UIState::PAIRED_KEYBOARDS:   return pairedForgetPending ? 0 : (getPairedKeyboardCount() > 0 ? 9 : 1);  // Back / Forget
       case UIState::BLUETOOTH_SETTINGS: return 1 | (btBarMask() & 8);                                            // Back / Scan
       case UIState::SETTINGS:           // Back (/ Forget on a saved Wi-Fi network)
@@ -505,6 +512,7 @@ uint8_t uiBarMask() {
   switch (currentState) {
     case UIState::FILE_BROWSER:
       if (deleteConfirmPending) return 0x3;                    // Cancel / Delete
+      if (deleteSelectMode) return 0x3 | (noteMarkedCount() > 0 ? 0x4 : 0);   // Cancel / All / Delete
       return selectedFileIndex >= 1 ? 0xF : 0x1;               // Back / Rename / Delete / Transfer
     case UIState::SETTINGS: {
       if (settingsSelection <= 0) return 0xD;                  // tab strip: Back / Prev / Next (tab)
@@ -604,7 +612,7 @@ void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
 
   if (darkMode) clippedFillRect(renderer, 0, 0, sw, sh, true);
 
-  drawScreenHeader(renderer, gpio, "Notes", tc);
+  drawScreenHeader(renderer, gpio, deleteSelectMode ? "Delete notes" : "Notes", tc);
   // Background sync: "OneDrive syncing", then "OneDrive synced", in the header beside the battery (the bottom
   // corner, where the main menu shows it, is the button bar here).
   const char* cs = cloud::listStatus();
@@ -615,38 +623,70 @@ void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
 
   const int fc = getFileCount();
   FileInfo* files = getFileList();
-  const ListGeom g = listGeom(renderer, true, LIST_ROW_PITCH, getFileCount() + 1);
   const int lhB = renderer.getLineHeight(LIST_FONT_B);
-  const int lhU = renderer.getLineHeight(FONT_UI);
   const int barFocus = (uiBarFocus >= 0 && ((uiBarMask() >> uiBarFocus) & 1)) ? uiBarFocus : -1;
+  const int marked = noteMarkedCount();
 
-  touchTargetsBegin(selectedFileIndex, LIST_ROW_PITCH);
-
-  // Rows: 0 = "+ New note", then one per file (file = row - 1).
-  const int rows = fc + 1;
+  // List positions: 0 = "+ New note", then one per file (file = position - 1). Delete mode leaves "+ New note" out,
+  // so its rows start at position 1; `first` is the position of the top row (rows and tap targets count from it).
+  const int first = deleteSelectMode ? 1 : 0;
+  const int rows = fc + 1 - first;
+  const ListGeom g = listGeom(renderer, true, LIST_ROW_PITCH, rows);
   const bool onFile = (selectedFileIndex >= 1 && selectedFileIndex <= fc);
 
-  if (deleteConfirmPending && onFile) {
-    drawConfirmPrompt(renderer, tc, g, "Delete this note?", files[selectedFileIndex - 1].title,
-                      "This cannot be undone.", "Delete");
+  touchTargetsBegin(selectedFileIndex - first, LIST_ROW_PITCH);
+
+  if (deleteConfirmPending && marked > 0) {
+    char question[40], subject[MAX_TITLE_LEN + 24];
+    if (marked == 1) {
+      snprintf(question, sizeof(question), "Delete this note?");
+      snprintf(subject, sizeof(subject), "%s", noteFirstMarkedTitle());
+    } else {
+      snprintf(question, sizeof(question), "Delete %d notes?", marked);
+      snprintf(subject, sizeof(subject), "%s and %d more", noteFirstMarkedTitle(), marked - 1);
+    }
+    // One note asked about from the list: with a keyboard, Space opens delete mode with that note ticked.
+    const bool hint = marked == 1 && !deleteSelectMode && isKeyboardConnected();
+    drawConfirmPrompt(renderer, tc, g, question, subject, "This cannot be undone.", "Delete",
+                      hint ? "Space: select several notes" : nullptr);
     return;
   }
 
   static ListView lv;
-  viewWindow(lv, selectedFileIndex, rows, g.rows);
+  viewWindow(lv, selectedFileIndex - first, rows, g.rows);
   const int start = lv.start;
   const int cw = sw - g.inset;
   for (int i = 0; i < g.rows && (start + i) < rows; i++) {
-    const int pos = start + i;
+    const int pos = start + i + first;
     const int y = g.top + i * LIST_ROW_PITCH;
-    addCardRow(pos, y, sw, LIST_ROW_PITCH, g.inset);
-    const bool ink = drawCard(renderer, tc, y, LIST_ROW_H, pos == selectedFileIndex, barFocus >= 0, g.inset);
+    addCardRow(pos - first, y, sw, LIST_ROW_PITCH, g.inset);
+    bool ink;
+    if (deleteSelectMode && pos > 0 && !CLASSIC) {
+      // Delete mode on a touch screen: no highlight at all. A tap fills or empties the note's box (Delete counts them).
+      ink = drawCard(renderer, tc, y, LIST_ROW_H, false, false, g.inset);
+    } else if (deleteSelectMode && pos > 0) {
+      // Delete mode on a button device: the row the arrows are on has a thick outline, never a filled bar, so the
+      // ticks (Enter fills the box) always show.
+      ink = tc;
+      if (pos == selectedFileIndex && barFocus < 0) renderer.drawRect(5, y, sw - 16 - g.inset + 6, LIST_ROW_H, 4, tc);
+    } else {
+      ink = drawCard(renderer, tc, y, LIST_ROW_H, pos == selectedFileIndex, barFocus >= 0, g.inset);
+    }
     if (pos == 0) {
       drawClippedText(renderer, LIST_FONT_B, 20, y + (LIST_ROW_H - lhB) / 2, "+  New note", cw - 40, ink,
                       EpdFontFamily::BOLD);
     } else {
+      int textX = 20;
+      if (deleteSelectMode) {
+        // The tick box: an empty square, filled with a smaller square when the note is ticked.
+        const int box = lhB * 3 / 4;
+        const int by = y + (LIST_ROW_H - box) / 2;
+        renderer.drawRect(20, by, box, box, 2, ink);
+        if (noteMarked(files[pos - 1].filename)) clippedFillRect(renderer, 20 + 5, by + 5, box - 10, box - 10, ink);
+        textX = 20 + box + 14;
+      }
       // An .md note says so at the right of its row (a .txt note and an .md note can share a title).
-      int titleW = cw - 40;
+      int titleW = cw - 20 - textX;
       if (strcmp(noteExtOf(files[pos - 1].filename), ".md") == 0) {
         const int tagW = renderer.getTextWidth(FONT_SMALL, "md", EpdFontFamily::BOLD);
         const int lhS = renderer.getLineHeight(FONT_SMALL);
@@ -654,7 +694,7 @@ void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
                         EpdFontFamily::BOLD);
         titleW -= tagW + 12;
       }
-      drawClippedText(renderer, LIST_FONT_B, 20, y + (LIST_ROW_H - lhB) / 2, files[pos - 1].title, titleW, ink);
+      drawClippedText(renderer, LIST_FONT_B, textX, y + (LIST_ROW_H - lhB) / 2, files[pos - 1].title, titleW, ink);
     }
   }
   drawScrollbar(renderer, tc, g, LIST_ROW_PITCH, start, rows);
@@ -665,16 +705,32 @@ void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
     drawClippedText(renderer, FONT_UI, 20, g.top + LIST_ROW_PITCH + 14, "No notes yet. Tap New note to start writing.",
                     sw - 40, tc);
   }
-  (void)lhU;
   (void)sh;
 
-  // Large layout: Back, then three buttons for the highlighted note; a note opens with a second tap (or Enter).
-  // Classic (E1001, buttons only): the Back row, with Transfer on the right.
   if (CLASSIC) {
-    const BarButton bar[4] = {{"Back", true}, {nullptr, false}, {nullptr, false}, {"Transfer", onFile}};
+    // Button device: a key guide instead of buttons that only Down past the last note could reach. Without a
+    // keyboard, Up+Down together is Back.
+    char hint[96];
+    if (deleteSelectMode)
+      snprintf(hint, sizeof(hint), "Enter tick   Delete: delete ticked (%d)   Ctrl+A all   Esc cancel", marked);
+    else if (onFile)
+      snprintf(hint, sizeof(hint), "Enter open   Space select   Delete   Ctrl+N rename   Ctrl+T transfer   Esc back");
+    else
+      snprintf(hint, sizeof(hint), "Enter new note   Esc back");
+    const int top = barTopY(renderer);
+    clippedLine(renderer, 5, top - 3, sw - 5, top - 3, tc);
+    const int lhS = renderer.getLineHeight(FONT_SMALL);
+    drawClippedText(renderer, FONT_SMALL, 10, top + (BAR_H - lhS) / 2, hint, sw - 20, tc);
+  } else if (deleteSelectMode) {
+    // Delete mode: Cancel, All (None once every note is ticked), and Delete with the count (dimmed at none).
+    char del[24];
+    snprintf(del, sizeof(del), marked > 0 ? "Delete (%d)" : "Delete", marked);
+    const BarButton bar[4] = {{"Cancel", true}, {marked < fc ? "All" : "None", true}, {del, marked > 0, true},
+                              {nullptr, false}};
     drawButtonBar(renderer, bar, tc, barFocus);
   } else {
-    // On "+ New note" the three stay in place, dimmed, so the bar never comes and goes.
+    // Back, then three buttons for the highlighted note; a note opens with a second tap (or Enter). On "+ New note"
+    // the three stay in place, dimmed, so the bar never comes and goes (the classic E1001 bar shows Back alone there).
     const BarButton bar[4] = {{"Back", true}, {"Rename", onFile, true}, {"Delete", onFile, true}, {"Transfer", onFile, true}};
     drawButtonBar(renderer, bar, tc, barFocus);
   }
@@ -1152,23 +1208,33 @@ static void drawExitPrompt(GfxRenderer& r, bool tc) {
   drawClippedText(r, FONT_SMALL, x + (w - hw) / 2, y + 16 + bh + 12, hint, w - 16, tc);
 }
 
-// The SD card is gone and the note has unsaved text (input_handler.h, editorSdWarn): full screen, any key goes back.
+// The note has unsaved text the card does not hold (input_handler.h, editorSdWarn): the card is gone, or it is there
+// but did not take the save. Full screen, any key goes back.
 static void drawSdWarning(GfxRenderer& r, HalGPIO& gpio) {
   const int sw = r.getScreenWidth();
   const bool tc = !darkMode;
   if (darkMode) clippedFillRect(r, 0, 0, sw, r.getScreenHeight(), true);
-  drawScreenHeader(r, gpio, "SD card removed", tc);
+  const bool gone = sdLost();
+  drawScreenHeader(r, gpio, gone ? "SD card removed" : "Note not saved", tc);
   const int lhL = r.getLineHeight(LIST_FONT_L);
   const int lh = r.getLineHeight(FONT_UI) + 6;
   int y = HDR_H + 30;
-  drawClippedText(r, LIST_FONT_L, 20, y, "Put the SD card back", sw - 40, tc, EpdFontFamily::BOLD);
+  drawClippedText(r, LIST_FONT_L, 20, y, gone ? "Put the SD card back" : "The SD card did not save it", sw - 40, tc,
+                  EpdFontFamily::BOLD);
   y += lhL + 18;
-  static const char* kBody[] = {"Your note is kept in memory for now and",
+  static const char* kGone[] = {"Your note is kept in memory for now and",
                                 "saves as soon as the card is back.",
                                 "",
                                 "Everything written since the card was",
                                 "removed is lost if the device turns off."};
-  for (const char* line : kBody) {
+  static const char* kFailed[] = {"Your note is kept in memory for now.",
+                                  "The card may be full or failing: free",
+                                  "some space, then save again (Ctrl+S).",
+                                  "",
+                                  "Unsaved text is lost if the device turns off."};
+  const char* const* body = gone ? kGone : kFailed;
+  for (int i = 0; i < 5; i++) {
+    const char* line = body[i];
     drawClippedText(r, FONT_UI, 20, y, line, sw - 40, tc);
     y += lh;
   }

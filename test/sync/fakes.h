@@ -90,11 +90,17 @@ struct FakeCloud : Transport {
   int puts = 0, gets = 0, deletes = 0;
   bool bearerLeaked = false;                // a download-link request carried a token
 
-  bool have_ = false;
+  int hangNext = 0;                         // next N requests (of hangMethod, if set) never answer
+  std::string hangMethod;
+  int busyAfterCancel = 0;                  // a cancelled hung request keeps the transport busy for N begin() calls
+  bool have_ = false, hanging_ = false;
+  int busyLeft_ = 0;
   HttpResponse resp_;
 
   bool begin(const HttpRequest& r) override {
-    if (have_) return false;
+    if (busyLeft_ > 0) { busyLeft_--; return false; }
+    if (have_ || hanging_) return false;
+    if (hangNext > 0 && (hangMethod.empty() || r.method == hangMethod)) { hangNext--; hanging_ = true; log.push_back("HANG " + r.method); return true; }
     resp_ = process(r);
     have_ = true;
     return true;
@@ -105,7 +111,10 @@ struct FakeCloud : Transport {
     have_ = false;
     return true;
   }
-  void cancel() override { have_ = false; }
+  void cancel() override {
+    if (hanging_) { hanging_ = false; busyLeft_ = busyAfterCancel; }
+    have_ = false;
+  }
 
   void put(const std::string& name, const std::string& content) {
     Item& it = files[name];

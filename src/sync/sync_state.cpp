@@ -34,7 +34,7 @@ std::string SyncState::toJson() const {
     if (i) out += ",";
     out += "{\"n\":\"" + jsonEscape(e.name) + "\",\"id\":\"" + jsonEscape(e.remoteId) + "\",\"rev\":\"" +
            jsonEscape(e.remoteRev) + "\",\"crc\":" + std::to_string(e.syncedCrc) +
-           ",\"sz\":" + std::to_string(e.syncedSize) + "}";
+           ",\"sz\":" + std::to_string(e.syncedSize) + (e.deletedHere ? ",\"del\":1}" : "}");
   }
   out += "]}\n";
   return out;
@@ -58,6 +58,7 @@ bool SyncState::fromJson(const std::string& text, SyncState& out) {
     e.remoteRev = item.str("rev");
     e.syncedCrc = (uint32_t)item.num("crc");
     e.syncedSize = (uint32_t)item.num("sz");
+    e.deletedHere = item.num("del") != 0;
     tmp.entries.push_back(e);
   }
   out = tmp;

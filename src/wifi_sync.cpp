@@ -89,7 +89,8 @@ static void restoreWifiBackup() {
     if (!sdReadFile(WIFI_BACKUP_PATH, buf, sizeof(buf))) return;
     int count = jsonGetInt(buf, "count");
     if (count <= 0) return;
-    for (int i = 0; i < count && i < MAX_SAVED_NETWORKS; i++) {
+    if (count > MAX_SAVED_NETWORKS) count = MAX_SAVED_NETWORKS;   // a damaged or hand-edited backup
+    for (int i = 0; i < count; i++) {
         char sKey[16], pKey[16], sNvs[16], pNvs[16];
         snprintf(sKey, sizeof(sKey), "s%d", i);
         snprintf(pKey, sizeof(pKey), "p%d", i);

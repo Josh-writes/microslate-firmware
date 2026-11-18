@@ -69,7 +69,18 @@ SyncEngine::Status SyncEngine::status() const {
 }
 
 void SyncEngine::issue(const HttpRequest& req, Handler h) {
-  if (!tp_.begin(req)) { fail(Error::Network, "Network is busy"); return; }
+  if (!tp_.begin(req)) {
+    // A request given up on (timeout) can still be finishing on the HTTPS task: wait for it, up to one more request
+    // timeout, instead of failing the whole sync with "Network is busy".
+    const uint32_t now = clock_.millisNow();
+    if (!busyWaiting_) { busyWaiting_ = true; busySince_ = now; }
+    if (now - busySince_ > cfg_.requestTimeoutMs) { busyWaiting_ = false; fail(Error::Network, "Network is busy"); return; }
+    wakeAt_ = now + 500;
+    waiting_ = true;
+    wakeFn_ = [this, req, h]() { issue(req, h); };
+    return;
+  }
+  busyWaiting_ = false;
   pending_ = true;
   handler_ = std::move(h);
   requestStartedAt_ = clock_.millisNow();
@@ -138,6 +149,7 @@ void SyncEngine::fail(Error e, const std::string& msg) {
   if (pending_) tp_.cancel();
   pending_ = false;
   waiting_ = false;
+  busyWaiting_ = false;
   actionActive_ = false;
   phase_ = Phase::Failed;
   result_.error = e;
@@ -179,6 +191,23 @@ void SyncEngine::signOut() {
   state_.clear();
   st_.writeState(state_.toJson());
   phase_ = Phase::Idle;
+}
+
+void SyncEngine::markDeletedHere(const std::vector<std::string>& names) {
+  // A run in progress holds the state in memory and saves it after each step: mark that copy, so the run keeps it.
+  SyncState fresh;
+  SyncState& s = busy() ? state_ : fresh;
+  if (!busy()) {
+    std::string txt;
+    if (!st_.readState(txt) || !SyncState::fromJson(txt, s)) return;   // no record: nothing to protect
+  }
+  bool changed = false;
+  for (StateEntry& e : s.entries) {
+    if (e.deletedHere) continue;
+    for (const std::string& n : names)
+      if (e.name == n) { e.deletedHere = true; changed = true; break; }
+  }
+  if (changed) st_.writeState(s.toJson());
 }
 
 void SyncEngine::step() {
@@ -494,7 +523,10 @@ void SyncEngine::beginPlan() {
   for (const Action& a : plan) {
     if (excluded_.count(a.name)) continue;
     if (a.type == ActionType::DeleteLocal) delLocal++;
-    if (a.type == ActionType::DeleteRemote) delRemote++;
+    if (a.type == ActionType::DeleteRemote) {
+      const StateEntry* s = state_.find(a.name);
+      if (!(s && s->deletedHere)) delRemote++;   // deleted on purpose here: not a sign of a lost card
+    }
     actions_.push_back(a);
   }
   // Mass-deletion guard: if most tracked notes suddenly look deleted on one side (a reformatted SD card, a renamed
@@ -510,7 +542,20 @@ void SyncEngine::beginPlan() {
     }
   };
   guard(ActionType::DeleteLocal, delLocal);
-  guard(ActionType::DeleteRemote, delRemote);
+  // The cloud deletions the user asked for (deletedHere) stay; only the unexplained ones are held.
+  {
+    const size_t tracked = state_.entries.size();
+    if (delRemote >= 5 && (size_t)delRemote * 2 > tracked) {
+      std::vector<Action> kept;
+      for (const Action& a : actions_) {
+        const StateEntry* s = a.type == ActionType::DeleteRemote ? state_.find(a.name) : nullptr;
+        if (a.type != ActionType::DeleteRemote || (s && s->deletedHere)) kept.push_back(a);
+      }
+      actions_ = kept;
+      result_.held += delRemote;
+      if (result_.message.empty()) result_.message = "Many notes look deleted; nothing was removed";
+    }
+  }
 
   actionIdx_ = 0;
   actionActive_ = false;
@@ -594,7 +639,9 @@ void SyncEngine::startAction() {
       else doFetch(a);
       break;
     case ActionType::DeleteLocal:
-      if (st_.isOpenNote(a.name)) { result_.held++; actionDone(true); break; }
+      // Open, or saved since the scan (the writer kept typing, then left the note): kept. The next sync sees the
+      // change and puts the note back in the cloud.
+      if (st_.isOpenNote(a.name) || localChangedSinceScan(a.name)) { result_.held++; actionDone(true); break; }
       if (!st_.trashNote(a.name)) { actionDone(false, "Could not move " + a.name + " to the trash"); break; }
       state_.erase(a.name);
       result_.deletedLocal++;
@@ -700,6 +747,8 @@ void SyncEngine::onFetched(const Action& a, const std::string& body) {
   if (a.type == ActionType::Download) {
     if (body.size() > cfg_.maxNoteBytes) { result_.tooLarge++; actionDone(true); return; }  // too big for this device
     if (st_.isOpenNote(a.name)) { result_.held++; actionDone(true); return; }
+    // Saved here since the scan: both sides changed after all, so both copies are kept.
+    if (localChangedSinceScan(a.name)) { resolveConflict(a, body); return; }
     if (!st_.writeNote(a.name, body)) { fail(Error::Storage, "Could not write " + a.name); return; }
     StateEntry e;
     e.name = a.name;
@@ -728,6 +777,15 @@ void SyncEngine::onFetched(const Action& a, const std::string& body) {
     }
   }
   resolveConflict(a, body);
+}
+
+// The plan was made from the scan; a note saved after it (the editor autosaves during a background sync) must not be
+// overwritten or trashed on the scan's word. True when the note on the card is not what the scan read.
+bool SyncEngine::localChangedSinceScan(const std::string& name) {
+  const LocalFile* lf = findLocal(name);
+  std::string data;
+  if (!st_.readNote(name, data, cfg_.maxUploadBytes)) return st_.noteExists(name);   // unreadable now: keep it
+  return !lf || lf->size != data.size() || lf->crc != crcOf(data);
 }
 
 // Both sides differ: keep the cloud version as a separate local note, then push the local version over the cloud

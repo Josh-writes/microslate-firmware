@@ -38,5 +38,6 @@ void key(uint8_t keyCode); // Enter: Install / Try again; Esc: back to Settings
 void loop();               // every main loop
 const View& view();
 bool keepAwake();          // a check or install is running: no idle sleep
+bool installing();         // writing the other slot or about to restart into it: no sleep, restart or leaving
 
 }  // namespace fwupdate

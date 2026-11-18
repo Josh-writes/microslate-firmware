@@ -18,6 +18,7 @@ extern GfxRenderer renderer;
 extern UIState currentState;
 extern bool screenDirty;
 extern bool deleteConfirmPending;
+extern bool deleteSelectMode;
 extern bool editorFindMode;
 extern bool editorExitPrompt;
 extern int editorExitSel;
@@ -81,14 +82,11 @@ void sendKeyTimes(uint8_t key, int times) {
   for (int i = 0; i < times; i++) sendKey(key);
 }
 
-// Same behavior as a short press of the power button: save, then main menu.
+
+// Same behavior as a short press of the power button: save, close the screen, then main menu.
 void goHome() {
   if (currentState == UIState::MAIN_MENU) return;
-  if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) {
-    saveCurrentFile();
-  }
-  currentState = UIState::MAIN_MENU;
-  screenDirty = true;
+  goToMainMenu();
   registerActivity();
 }
 
@@ -252,6 +250,9 @@ int sliderLastTarget = -1;
 // arrive as a tap outside the menu and close it at once, while the screen still showed it.
 bool menuHoldActive = false;
 
+// A press and hold on a note that opened delete mode: its lift must not also tick or open the note.
+bool listHoldActive = false;
+
 }  // namespace
 
 void processTouch() {
@@ -285,6 +286,16 @@ void processTouch() {
     if (currentState == UIState::TEXT_EDITOR && gpio.isTouchHeldAt(hx, hy)) return;
     menuHoldActive = false;
     float d1 = 0, d2 = 0, d3 = 0, d4 = 0;   // swallow the lift: the menu stays open for the next tap
+    gpio.wasSwipe(d1, d2, d3, d4);
+    gpio.wasTouchTap(d1, d2);
+    return;
+  }
+
+  if (listHoldActive) {
+    float hx = 0, hy = 0;
+    if (gpio.isTouchHeldAt(hx, hy)) return;
+    listHoldActive = false;
+    float d1 = 0, d2 = 0, d3 = 0, d4 = 0;   // swallow the lift: the note stays ticked, not opened
     gpio.wasSwipe(d1, d2, d3, d4);
     gpio.wasTouchTap(d1, d2);
     return;
@@ -365,7 +376,25 @@ void processTouch() {
   // Press and hold on a word in the editor selects it, like a phone. The finger
   // may then keep dragging to extend the selection (selectDragActive, above).
   float lx = 0, ly = 0;
-  if (gpio.wasTouchLongPress(lx, ly) && currentState == UIState::TEXT_EDITOR && !editorFindMode && !screenDirty &&
+  const bool longPress = gpio.wasTouchLongPress(lx, ly);
+
+  // Press and hold on a note in the notes list: delete mode with that note ticked (Space does the same).
+  if (longPress && currentState == UIState::FILE_BROWSER && !deleteSelectMode && !deleteConfirmPending) {
+    int hit = 0;
+    if (touchTargetsHit(logicalX(lx, ly), logicalY(lx, ly), &hit)) {
+      const int delta = hit - touchTargetsSelected();
+      if (abs(delta) <= MAX_STEPS) {
+        DBG_PRINTF("[TOUCH] long-press -> select notes from row %d\n", hit);
+        sendKeyTimes(delta < 0 ? HID_KEY_UP : HID_KEY_DOWN, abs(delta));
+        sendKey(HID_KEY_ROW_HOLD);
+        listHoldActive = true;
+        registerActivity();
+        return;
+      }
+    }
+  }
+
+  if (longPress && currentState == UIState::TEXT_EDITOR && !editorFindMode && !screenDirty &&
       !editorMenu && !spellMenu && !editorExitPrompt && !editorSdWarn) {   // no text press under an open box
     const int lpx = logicalX(lx, ly);
     const int lpy = logicalY(lx, ly);
@@ -617,6 +646,17 @@ void processTouch() {
   int hit = 0;
   if (!touchTargetsHit(px, py, &hit)) {
     DBG_PRINTF("[TOUCH] tap (%d,%d) -> no row\n", px, py);
+    return;
+  }
+  // Delete mode: a tap ticks or unticks the note and leaves the highlight where it is, so the two never look alike
+  // (row i there is note i: "+ New note" is not in that list). Nothing is deleted before the question after Delete.
+  if (currentState == UIState::FILE_BROWSER && deleteSelectMode) {
+    if (hit >= 0 && hit < getFileCount()) {
+      DBG_PRINTF("[TOUCH] tap -> tick note %d\n", hit);
+      noteToggleMark(getFileList()[hit].filename);
+      screenDirty = true;
+      registerActivity();
+    }
     return;
   }
   const int delta = hit - touchTargetsSelected();

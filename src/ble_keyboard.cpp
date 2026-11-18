@@ -1118,6 +1118,8 @@ static void restoreBleBackup() {
     int count = jsonGetInt(buf, "count");
     int last  = jsonGetInt(buf, "last");
     if (count < 0) return;
+    if (count > MAX_PAIRED_KEYBOARDS) count = MAX_PAIRED_KEYBOARDS;   // a damaged or hand-edited backup
+    if (last >= count) last = -1;
     for (int i = 0; i < count && i < MAX_PAIRED_KEYBOARDS; i++) {
         char aKey[8], nKey[8], tKey[8];
         snprintf(aKey, sizeof(aKey), "a%d", i);

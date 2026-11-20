@@ -3,6 +3,9 @@
 Distraction-free writing firmware for e-paper devices. Pair a **Bluetooth LE keyboard**, write, and your notes are
 saved to the SD card as plain text files, with optional sync to OneDrive, Dropbox or Google Drive.
 
+MicroSlate is a [partner firmware](https://www.seeedstudio.com/sticky/playground/firmware/) on Seeed Studio's
+reTerminal Sticky Firmware Playground, where Sticky owners can also flash it.
+
 ## Which firmware for my device
 
 | Device | Firmware |

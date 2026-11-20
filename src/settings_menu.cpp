@@ -9,6 +9,7 @@
 #include "sleep/sleep_screen.h"
 #include "spell/spell_service.h"
 #include "update/fw_update.h"
+#include "update/readers.h"
 #include "wifi_sync.h"
 
 #include <cstdio>
@@ -159,6 +160,9 @@ void shortcutsOpen() { editorMenu = 2; }
 void updateValue(char* out, size_t n) { snprintf(out, n, "v%s", fwupdate::version()); }
 void updateOpen() { fwupdate::open(); }
 
+void readerValue(char* out, size_t n) { readers::settingValue(out, n); }
+void readerOpen() { readers::open(); }
+
 // ---- The table ----
 
 bool always() { return true; }
@@ -219,6 +223,8 @@ constexpr Setting kEditorMenu[] = {
 
 // The Wi-Fi tab's last row, under "+ Add a network".
 constexpr Setting kUpdate = {"Firmware update", always, updateValue, nullptr, updateOpen};
+// Under it on devices with reader builds (dual boot).
+constexpr Setting kReader = {"Reader", readers::supported, readerValue, nullptr, readerOpen};
 
 struct Tab {
   const char* name;
@@ -246,9 +252,14 @@ int shownCount(const Setting* rows, int count) {
   return n;
 }
 
-// The Wi-Fi tab's rows are the saved networks and Add a network; only its last row (Firmware update) is a Setting.
+// The Wi-Fi tab's rows are the saved networks and Add a network; only its last rows (Firmware update, Reader) are
+// Settings.
 const Setting* rowSetting(int tab, int row) {
-  if (tab == kSettingsTabWifi) return row == wifiSavedCount() + 1 ? &kUpdate : nullptr;
+  if (tab == kSettingsTabWifi) {
+    if (row == wifiSavedCount() + 1) return &kUpdate;
+    if (row == wifiSavedCount() + 2 && kReader.shown()) return &kReader;
+    return nullptr;
+  }
   if (tab < 0 || tab >= kSettingsTabCount) return nullptr;
   return shownRow(kTabs[tab].rows, kTabs[tab].count, row);
 }
@@ -260,7 +271,8 @@ constexpr int kEditorMenuCount = static_cast<int>(sizeof(kEditorMenu) / sizeof(k
 const char* settingsTabName(int tab) { return (tab >= 0 && tab < kSettingsTabCount) ? kTabs[tab].name : ""; }
 
 int settingsTabRows(int tab) {
-  if (tab == kSettingsTabWifi) return wifiSavedCount() + 2;   // saved networks, Add a network, Firmware update
+  // Saved networks, Add a network, Firmware update (, Reader).
+  if (tab == kSettingsTabWifi) return wifiSavedCount() + 2 + (kReader.shown() ? 1 : 0);
   if (tab < 0 || tab >= kSettingsTabCount) return 0;
   return shownCount(kTabs[tab].rows, kTabs[tab].count);
 }

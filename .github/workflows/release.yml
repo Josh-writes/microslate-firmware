@@ -22,6 +22,8 @@ jobs:
             device: sticky
           - env: xteink_x4pro
             device: x4pro
+          - env: xteink_x4c
+            device: x4c
           - env: e1001_release
             device: e1001
 
@@ -143,5 +145,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add tools/microslate/firmware/v3
-          git commit -m "MicroSlate ${{ github.ref_name }} installer files (Sticky, E1001, X4 Pro)"
+          git commit -m "MicroSlate ${{ github.ref_name }} installer files (Sticky, E1001, X4 Pro, X4 Classic)"
           git push

@@ -5,7 +5,7 @@
 // The Settings screen's rows. Five tabs (Josh, 2026-10-28): Editor, Wi-Fi, Bluetooth, Keyboard, Display. Every row
 // is one entry in the table in settings_menu.cpp (label, the value shown on the right, what Prev / Next or Open
 // do), so the screen and the input handler cannot disagree about a row. The Wi-Fi tab lists the saved
-// networks, then "Add a network" and "Firmware update".
+// networks, then "Add a network", "Firmware update" and, on devices with reader builds, "Reader" (dual boot).
 // settingsSelection (main.cpp) is 0 for the tab strip and 1.. for the open tab's rows; rows here count from 0.
 
 constexpr int kSettingsTabCount = 5;

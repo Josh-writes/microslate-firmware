@@ -10,6 +10,7 @@ saved to the SD card as plain text files, with optional sync to OneDrive, Dropbo
 | Seeed reTerminal Sticky | **v3**, this branch |
 | Seeed reTerminal E1001 | **v3**, this branch |
 | Xteink X4 Pro | v3, this branch. *Experimental*: built on the FreeInk SDK's X4 Pro support, not yet tested on hardware by us. Feedback welcome. |
+| Xteink X4 Classic ("X4 v2") | v3, this branch. *Experimental*: built on the FreeInk SDK's X4 Classic support, not yet tested on hardware by us. Feedback welcome. |
 | Xteink X4 (original) | **v2.1** (see below). A simplified v3 for it is coming. |
 | Xteink X3 | Not supported yet. The simplified v3 for the X4 will also cover the X3. |
 
@@ -19,7 +20,7 @@ saved to the SD card as plain text files, with optional sync to OneDrive, Dropbo
 > - Release files: [v2.1.0](https://github.com/Josh-writes/microslate-firmware/releases/tag/v2.1.0).
 > - Source and its own README: the [`v2.1` branch](https://github.com/Josh-writes/microslate-firmware/tree/v2.1).
 >
-> The v3 files on this page are for the Sticky, E1001 and X4 Pro only. They do not run on the original X4.
+> The v3 files on this page are for the Sticky, E1001, X4 Pro and X4 Classic only. They do not run on the original X4.
 
 **Keyboards:** only Bluetooth LE keyboards work. None of these devices has a Classic Bluetooth radio, so a
 Classic-only keyboard can never connect, whatever the firmware does. "Bluetooth 5.0" on the box is not enough: look for
@@ -44,6 +45,8 @@ BLE, Bluetooth Low Energy, or "works with iPad". Tested on v3 with the Logitech 
   layout editor on the device.
 - **Keyboards**: up to 4 remembered; the device reconnects to whichever one is switched on. Keyboards are read from
   their own report descriptor, so most work without a device list. Held keys repeat.
+- **E-reader next to MicroSlate** (Sticky, X4 Pro, X4 Classic): install CrossPoint or CrossInk from Settings and switch
+  between writing and reading from the main menu.
 - **Sleep screen**: the built-in screen, or your own pictures sent from a phone.
 - **Touch** on the Sticky and X4 Pro: lists, buttons, and tapping into the text.
 - **Files**: `.txt` or `.md` notes in `/notes/` on the card, readable by any text editor. Notes written on Windows keep
@@ -51,7 +54,7 @@ BLE, Bluetooth Low Energy, or "works with iPad". Tested on v3 with the Logitech 
 
 ## Install
 
-These steps are for the Sticky, E1001 and X4 Pro. For the original Xteink X4, see v2.1 above.
+These steps are for the Sticky, E1001, X4 Pro and X4 Classic. For the original Xteink X4, see v2.1 above.
 
 The easiest way is the browser installer at [typeslate.com/tools/microslate](https://typeslate.com/tools/microslate/#install)
 (Chrome or Edge): pick your device and click Install. Settings, keyboards and sign-ins are kept.
@@ -66,7 +69,7 @@ esptool.py --chip esp32s3 --port <PORT> --baud 921600 write_flash 0x10000 micros
 ```
 
 The release files are on the [Releases](https://github.com/Josh-writes/microslate-firmware/releases) page:
-`microslate-sticky-*.bin`, `microslate-e1001-*.bin` and `microslate-x4pro-*.bin`.
+`microslate-sticky-*.bin`, `microslate-e1001-*.bin`, `microslate-x4pro-*.bin` and `microslate-x4c-*.bin`.
 
 Updates after that: **Settings > Wi-Fi > Firmware update** checks the latest release and installs it over Wi-Fi.
 
@@ -86,6 +89,8 @@ The main menu has **Notes**, **Settings**, **Transfer** and **Sync**. Every scre
 - **Sticky**: tap lists, buttons and text; its button selects. A keyboard does everything else.
 - **E1001**: Up and Down move, the green key selects, Up and Down together go back.
 - **X4 Pro**: the Home key below the screen is Back; Left and Right move; Power opens the menu.
+- **X4 Classic**: the side keys and the front Left and Right move, Confirm selects, Back goes back. The buttons follow
+  the screen when you turn it.
 - Hold **Power** for 3 seconds to sleep. On devices with a Back button, hold it for 5 seconds to restart.
 
 ### Editor shortcuts
@@ -142,6 +147,19 @@ list. Sign-ins are stored on the device only, never on the SD card.
 page, tick notes and download them (one `.txt`, or a `.zip` for several), or copy a note's text. With no saved Wi-Fi
 in range, the device opens its own hotspot: join it with the first QR code, then open the page with the second.
 
+### E-reader (dual boot)
+
+On the Sticky, X4 Pro and X4 Classic, **Settings > Wi-Fi > Reader** installs an e-reader next to MicroSlate:
+[CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader) or [CrossInk](https://github.com/uxjulia/CrossInk).
+It goes into the device's second app slot, so notes, settings and sign-ins stay as they are. The reader then appears on
+MicroSlate's main menu, and its home screen has MicroSlate to come back. MicroSlate keeps a copy of the reader on the SD
+card: swapping back, or the reader returning after a MicroSlate update, needs no download. **Update** on the installed
+reader's card fetches a newer release; Remove asks whether to keep the copy on the card.
+
+The readers come from MicroSlate's forks, changed only for dual boot:
+[crosspoint-microslate](https://github.com/Josh-writes/crosspoint-microslate) and
+[crossink-microslate](https://github.com/Josh-writes/crossink-microslate). Reader issues belong with the original projects.
+
 ### Files on the SD card
 
 | Path | What it holds |
@@ -149,6 +167,7 @@ in range, the device opens its own hotspot: join it with the first QR code, then
 | `/notes/` | Your notes, `.txt` or `.md`. Text files copied here from a computer appear on the device. |
 | `/microslate/layouts/` | Keyboard layout files |
 | `/microslate/dictionary.txt` | Your spellcheck words, one per line |
+| `/microslate/readers/` | The e-reader's saved copy (dual boot) |
 | `/microslate/` | Settings backups (Wi-Fi network names only; passwords stay on the device) |
 
 Take the SD card out only when the device is off, or on a menu with no save or sync running. If the card is pulled
@@ -171,6 +190,7 @@ pio run -e sticky_release        # firmware: .pio/build/sticky_release/firmware.
 | `sticky_release` / `sticky` | Seeed reTerminal Sticky (`sticky` keeps debug output on serial) |
 | `e1001_release` / `e1001` | Seeed reTerminal E1001 (`e1001` keeps debug output on serial) |
 | `xteink_x4pro` | Xteink X4 Pro (experimental) |
+| `xteink_x4c` | Xteink X4 Classic (experimental) |
 | `xteink_x4` | Xteink X4 (builds; v3 is not yet tested on it) |
 | `sticky_bledump` | Test devices only: prints raw Bluetooth reports, which include everything typed. Never for daily use. |
 

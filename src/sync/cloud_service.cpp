@@ -67,7 +67,7 @@ bool offlineWaitOver(uint32_t now) { return g_offlineWaitMs == 0 || (int32_t)(no
 constexpr uint32_t kWifiLingerMs = 120000;        // keep Wi-Fi up after a sync so the next push reuses it
 constexpr uint32_t kBrowseHoldMs = 8000;          // longest a note being opened waits for its sync
 constexpr uint32_t kListMsgMs = 4000;             // "OneDrive synced" stays in the notes list corner this long
-constexpr uint32_t kSleepFlushMs = 10000;         // longest we delay sleep to push the last edit
+constexpr uint32_t kSleepFlushMs = 30000;         // longest the push behind the sleep screen may take
 constexpr uint32_t kTimeWaitMs = 10000;           // wait for the date (needed to verify TLS certificates)
 constexpr const char* kNs = "ms_cloud";
 

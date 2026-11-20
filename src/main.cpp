@@ -34,13 +34,28 @@
 #include "sleep/sleep_screen.h"
 #include "transfer/transfer_service.h"
 #include "update/fw_update.h"
+#include "update/readers.h"
 #include "editor_prof.h"
 #include "keyboard_layout.h"
 #include "frontlight.h"
 #include "screen_refresh.h"
 #include "ui_prefs.h"
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO
+#if (defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO) || (defined(FREEINK_DEVICE_X4CLASSIC) && FREEINK_DEVICE_X4CLASSIC)
 #include <XteinkDetect.h>
+#endif
+#include "microslate_switch.h"
+
+// Marker the readers (CrossPoint, CrossInk) look for in the other app slot to offer a way back to MicroSlate.
+#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO
+MS_SWITCH_APP("microslate", "MicroSlate", "x4pro");
+#elif defined(FREEINK_DEVICE_X4CLASSIC) && FREEINK_DEVICE_X4CLASSIC
+MS_SWITCH_APP("microslate", "MicroSlate", "x4c");
+#elif defined(FREEINK_DEVICE_E1001) && FREEINK_DEVICE_E1001
+MS_SWITCH_APP("microslate", "MicroSlate", "e1001");
+#elif defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
+MS_SWITCH_APP("microslate", "MicroSlate", "sticky");
+#else
+MS_SWITCH_APP("microslate", "MicroSlate", "x4,x3");
 #endif
 
 // Why the device goes to sleep (shown in the debug log)
@@ -201,6 +216,7 @@ static void updateScreen() {
     case UIState::WIFI_SYNC:          drawSyncScreen(renderer, gpio); break;
     case UIState::TRANSFER:           drawTransferScreen(renderer, gpio); break;
     case UIState::FW_UPDATE:          drawFwUpdateScreen(renderer, gpio); break;
+    case UIState::READER:             drawReaderScreen(renderer, gpio); break;
     case UIState::SLEEP_PICTURES:     drawSleepPictures(renderer, gpio); break;
     case UIState::MY_WORDS:           drawMyWords(renderer, gpio); break;
     case UIState::SD_MISSING:         drawCloudNotice(renderer, gpio, "SD card removed", "Insert it, then press any button."); break;
@@ -213,6 +229,7 @@ void setup() {
   BoardConfig::holdPowerRails();  // Sticky: PWR_HOLD/PWR_LOCK must be driven before anything else
   DBG_INIT();
   DBG_PRINTLN("MicroSlate starting...");
+  msswitch::begin();
 #ifndef RELEASE_BUILD
   // Every failed allocation, with what was left: out-of-memory reboots during sync (2026-10-30) gave no culprit.
   // esp_rom_printf allocates nothing and is safe wherever the allocation failed.
@@ -247,9 +264,9 @@ void setup() {
   // C3 X4 keeps its original order (display, then SD in fileManagerSetup()).
   SdMan.begin();
 #endif
-#if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO
-  // X4 Pro batches carry an SSD1677, UC8179 or UC8279: probe the bus before the display starts (the C3 X4 does this in
-  // HalGPIO::begin(), as CrossPoint does). The case covers a band at the panel edges (Draftling measured about 12 px
+#if (defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO) || (defined(FREEINK_DEVICE_X4CLASSIC) && FREEINK_DEVICE_X4CLASSIC)
+  // X4 Pro and X4 Classic batches carry an SSD1677, UC8179 or UC8279: pick the driver before the display starts (the
+  // X4 Classic from the factory NVS value; the C3 X4 does this in HalGPIO::begin(), as CrossPoint does). The case covers a band at the panel edges (Draftling measured about 12 px
   // on one side and 8 px on the other on its unit); keep the drawing clear of it on both sides of each axis.
   freeink::applyXteinkDisplayController();
   GfxRenderer::setPanelInset(12, 8);
@@ -315,6 +332,9 @@ void setup() {
   // No keyboard paired yet (first start, or all forgotten): start on the Bluetooth screen, which scans on entry.
   if (getPairedKeyboardCount() == 0) currentState = UIState::BLUETOOTH_SETTINGS;
 
+  // Dual boot: what is in the other app slot, and after a MicroSlate update the reader it wrote over comes back.
+  readers::boot();
+
   DBG_PRINTLN("MicroSlate ready.");
 
   // The display needs one FULL_REFRESH after power-on to initialize its analog
@@ -332,17 +352,19 @@ void enterDeepSleep(SleepReason reason) {
              reason == SleepReason::POWER_LONGPRESS ? "power button" : "idle timeout");
   light::off();
 
-  // Get the last edit to OneDrive first (bounded wait, about 10 s). Save the open note so there is something to push.
+  // The sleep screen goes up at once, so a hold on the power button answers straight away; the device only looks
+  // asleep while it finishes below. Save the open note first so the push has something to send.
   if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) saveCurrentFile();
+  esp_task_wdt_reset();
+  renderSleepScreen();
+
+  // Get the last edit to OneDrive behind the sleep screen (bounded wait, about 30 s). Keys do nothing meanwhile.
   transfer::stop();   // hotspot and page off; the push below may then use a saved network
   cloud::flushBeforeSleep();
 
-  // Stop watching the loop task — the sleep prep below (full refresh + waiting for
-  // the power button to be released) blocks intentionally and must not trip the WDT.
+  // Stop watching the loop task — the rest (waiting for the power button to be released) blocks intentionally and
+  // must not trip the WDT.
   esp_task_wdt_delete(NULL);
-
-  // Render the sleep screen before entering deep sleep
-  renderSleepScreen();
 
   // Save any unsaved work
   if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) {
@@ -428,11 +450,22 @@ static void processPhysicalButtons() {
       std::swap(btnUp, btnDown);
       std::swap(btnLeft, btnRight);
     }
+    // X4 Classic held sideways (as on the X4, c670bbe on v3lite): the front row runs down one side of the screen and
+    // the side pair along the top or bottom. Each button then moves the way it sits: the front Right/Left (top/bottom
+    // of the row) are Up/Down, the side Up/Down are Left/Right. The swap above already turned LandscapeClockwise into
+    // the LandscapeCounterClockwise arrangement.
+    if (kFrontRowAndSidePair && (o == GfxRenderer::LandscapeCounterClockwise || o == GfxRenderer::LandscapeClockwise)) {
+      const bool frontTop = btnRight, frontBottom = btnLeft, pairLeft = btnUp, pairRight = btnDown;
+      btnUp = frontTop;
+      btnDown = frontBottom;
+      btnLeft = pairLeft;
+      btnRight = pairRight;
+    }
   }
 
-  // Button-only devices (E1001) have no Back key: Up and Down together send Escape. Whichever
+  // Devices without a Back key (E1001): Up and Down together send Escape. Whichever
   // button lands first scrolls once; the chord then owns both until they are released.
-  if (kClassicUi) {
+  if (kUpDownIsBack) {
     static bool chordActive = false;
     if (btnUp && btnDown) {
       if (!chordActive) {
@@ -515,9 +548,11 @@ static void processPhysicalButtons() {
 
   // Map physical buttons to HID key codes based on current UI state
   switch (currentState) {
-    // List screens (all with the shared bottom bar): Up/Down scroll; the front Left/Right
-    // buttons scroll too (Right = up, Left = down) until the bar has focus, then they
-    // step along it. Confirm presses the highlighted row / focused bar button.
+    // List screens (all with the shared bottom bar): Up/Down scroll; Left/Right scroll too
+    // (touch layout: Right = up; button-only layout: Left = up) until the bar has focus, then
+    // they step along it. Confirm presses the highlighted row / focused bar button.
+    // Settings on the button-only layout: Left/Right stay Left/Right, so they change the tab
+    // on the tab strip and step the value on a value row.
     case UIState::MAIN_MENU:
     case UIState::FILE_BROWSER:
     case UIState::SETTINGS:
@@ -528,8 +563,10 @@ static void processPhysicalButtons() {
     case UIState::LAYOUT_EDITOR: {
       if (btnUp && !btnUpLast) tapKey(HID_KEY_UP);
       if (btnDown && !btnDownLast) tapKey(HID_KEY_DOWN);
-      if (btnRight && !btnRightLast) tapKey(uiBarFocus >= 0 ? HID_KEY_RIGHT : HID_KEY_UP);
-      if (btnLeft && !btnLeftLast) tapKey(uiBarFocus >= 0 ? HID_KEY_LEFT : HID_KEY_DOWN);
+      const bool sideways = uiBarFocus >= 0 || (kClassicUi && currentState == UIState::SETTINGS);
+      // Button-only layout: Left is the previous row and Right the next, as read on the screen.
+      if (btnRight && !btnRightLast) tapKey(sideways ? HID_KEY_RIGHT : kClassicUi ? HID_KEY_DOWN : HID_KEY_UP);
+      if (btnLeft && !btnLeftLast) tapKey(sideways ? HID_KEY_LEFT : kClassicUi ? HID_KEY_UP : HID_KEY_DOWN);
       if (btnConfirm && !btnConfirmLast) tapKey(HID_KEY_ENTER);
       if (btnBack && !btnBackLast) tapKey(HID_KEY_ESCAPE);
       break;
@@ -578,11 +615,16 @@ static void processPhysicalButtons() {
     case UIState::WIFI_SYNC:
     case UIState::TRANSFER:
     case UIState::FW_UPDATE:
-      if ((btnUp && !btnUpLast) || (btnRight && !btnRightLast)) tapKey(HID_KEY_UP);
-      if ((btnDown && !btnDownLast) || (btnLeft && !btnLeftLast)) tapKey(HID_KEY_DOWN);
+    case UIState::READER: {
+      // Left/Right step the list too: the button-only layout reads Left as up, the touch layout Right.
+      const bool prev = kClassicUi ? (btnLeft && !btnLeftLast) : (btnRight && !btnRightLast);
+      const bool next = kClassicUi ? (btnRight && !btnRightLast) : (btnLeft && !btnLeftLast);
+      if ((btnUp && !btnUpLast) || prev) tapKey(HID_KEY_UP);
+      if ((btnDown && !btnDownLast) || next) tapKey(HID_KEY_DOWN);
       if (btnConfirm && !btnConfirmLast) tapKey(HID_KEY_ENTER);
       if (btnBack && !btnBackLast) tapKey(HID_KEY_ESCAPE);
       break;
+    }
 
     default:
       break;
@@ -715,6 +757,7 @@ void loop() {
   if (isWifiSyncActive()) wifiSyncLoop();
   transfer::loop();
   fwupdate::loop();
+  readers::loop();
 
   // CRITICAL: Process buttons BEFORE checking wasAnyPressed() to avoid consuming button states
   processPhysicalButtons();
@@ -816,7 +859,8 @@ void loop() {
 
   // Check for idle timeout (skip while WiFi sync is active). Text the card does not hold (card gone, or a save that
   // failed) keeps the device awake with the warning; it tries again after another idle period.
-  if (!isWifiSyncActive() && !fwupdate::keepAwake() && millis() - lastActivityTime > IDLE_TIMEOUT) {
+  if (!isWifiSyncActive() && !fwupdate::keepAwake() && !readers::keepAwake()
+      && millis() - lastActivityTime > IDLE_TIMEOUT) {
     if (noteLeftUnsaved()) {
       if (!editorSdWarn) showUnsavedWarning(1);
       registerActivity();

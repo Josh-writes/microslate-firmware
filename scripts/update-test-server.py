@@ -2,9 +2,11 @@
 """Test-only stand-in for GitHub releases, for the firmware update (Settings > Wi-Fi > Firmware update).
 
 A debug build made with -DMS_UPDATE_REPO=\\"http://<this machine>:<port>\\" asks this server instead of GitHub. It
-answers as github.com does: /releases/latest redirects to /releases/tag/<tag>, and
-/releases/download/<tag>/<file> redirects to the file (404 when the folder has no such file). Plain HTTP, so only
-debug builds accept it.
+answers as github.com does: /releases/latest redirects to /releases/tag/<tag>, /releases/latest/download/<file>
+to /releases/download/<tag>/<file>, and that redirects to the file (404 when the folder has no such file). Anything
+before "releases" in the path is ignored, so one server also stands in for the readers' repos (a debug build made
+with -DMS_READER_HOST=\\"http://<this machine>:<port>\\" asks for /<repo>/releases/latest/download/<id>-<device>.bin).
+Plain HTTP, so only debug builds accept it.
 
     python3 update-test-server.py --tag v3.0.1 --dir <folder with microslate-<device>-v3.0.1.bin> [--port 8765]
 """
@@ -31,6 +33,10 @@ def main():
 
         def do_GET(self):
             parts = self.path.strip("/").split("/")
+            if "releases" in parts:   # /<repo>/releases/... (the readers) is the same as /releases/...
+                parts = parts[parts.index("releases"):]
+            if len(parts) == 4 and parts[:3] == ["releases", "latest", "download"]:
+                return self.redirect(f"/releases/download/{args.tag}/{parts[3]}")
             if parts == ["releases", "latest"]:
                 return self.redirect(f"/releases/tag/{args.tag}")
             if len(parts) == 4 and parts[:2] == ["releases", "download"] and parts[2] == args.tag:

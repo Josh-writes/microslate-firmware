@@ -17,6 +17,12 @@ void drawSleepPictures(GfxRenderer& renderer, HalGPIO& gpio);
 void drawMyWords(GfxRenderer& renderer, HalGPIO& gpio);
 void drawTransferScreen(GfxRenderer& renderer, HalGPIO& gpio);
 void drawFwUpdateScreen(GfxRenderer& renderer, HalGPIO& gpio);
+void drawReaderScreen(GfxRenderer& renderer, HalGPIO& gpio);
+
+// The main menu, top to bottom: Notes, Transfer, Sync, the installed reader (dual boot), Settings. The screen and the
+// input handler both read the order from here. Returns the number of items.
+enum class MainItem : unsigned char { Notes, Reader, Transfer, Sync, Settings };
+int mainMenuItems(MainItem (&out)[5]);
 
 // Editor text with tabs: a tab is a fixed indent (kEditorTabSpaces space widths), not a tab stop, so a line's wrap
 // still depends only on where it starts. Wrapping (main.cpp), drawing, the cursor and taps all use this width.

@@ -20,7 +20,8 @@ enum class UIState {
   TRANSFER,       // the Transfer screen: a phone or computer copies or downloads notes
   SLEEP_PICTURES, // the sleep pictures: list, preview, pin, delete, add from a phone
   MY_WORDS,       // the writer's own spellcheck words: list and remove (Settings > Editor)
-  FW_UPDATE       // firmware update from the GitHub release (Settings > Wi-Fi)
+  FW_UPDATE,      // firmware update from the GitHub release (Settings > Wi-Fi)
+  READER          // dual boot: install, swap or remove a reader (Settings > Wi-Fi > Reader)
 };
 
 // --- Display Orientation ---
@@ -37,12 +38,26 @@ enum class Orientation : uint8_t {
 #if defined(FREEINK_DEVICE_E1001) && FREEINK_DEVICE_E1001
 constexpr bool kOrientationLocked = true;
 constexpr Orientation kLockedOrientation = Orientation::LANDSCAPE_CCW;
-// Button-only device: use the original v2.1 list look (small header, plain rows, compact button strip).
-constexpr bool kClassicUi = true;
 #else
 constexpr bool kOrientationLocked = false;
 constexpr Orientation kLockedOrientation = Orientation::PORTRAIT;
+#endif
+
+// Button-only devices (E1001, X4 Classic): the original v2.1 list look (small header, plain rows, compact button
+// strip) instead of the touch layout. The E1001 has no Back button: Up and Down together are Back there. The X4 Classic
+// has the X4's front row (Left, Right, Confirm, Back) and a side pair (Up, Down), and is held in any orientation.
+#if defined(FREEINK_DEVICE_E1001) && FREEINK_DEVICE_E1001
+constexpr bool kClassicUi = true;
+constexpr bool kUpDownIsBack = true;
+constexpr bool kFrontRowAndSidePair = false;
+#elif defined(FREEINK_DEVICE_X4CLASSIC) && FREEINK_DEVICE_X4CLASSIC
+constexpr bool kClassicUi = true;
+constexpr bool kUpDownIsBack = false;
+constexpr bool kFrontRowAndSidePair = true;
+#else
 constexpr bool kClassicUi = false;
+constexpr bool kUpDownIsBack = false;
+constexpr bool kFrontRowAndSidePair = false;
 #endif
 
 // --- Writing Modes ---
@@ -88,7 +103,7 @@ static constexpr unsigned long AUTO_SAVE_RETRY_MS    = 5000;   // After a failed
 // The release tag is "v" + this (release.yml checks it). Settings > Wi-Fi > Firmware update compares it with the
 // latest GitHub release. A test build may set another version and MS_UPDATE_REPO (a test repository) with -D.
 #ifndef MS_FIRMWARE_VERSION
-#define MS_FIRMWARE_VERSION "3.0.3"
+#define MS_FIRMWARE_VERSION "3.0.4"
 #endif
 
 // --- Buffer/Queue Sizes ---

@@ -5,7 +5,8 @@
 // into the other app slot. A failed or interrupted download leaves the running firmware as it was. The device then
 // runs from that slot, and the next update goes to the other one (as CrossPoint does); cable flashing erases otadata
 // so the device starts the first slot again.
-// v3 is a standalone firmware: both app slots are MicroSlate's (no dual boot).
+// Dual boot (src/update/readers): when a reader (CrossPoint, CrossInk) is in the other slot, the update writes over
+// it, and the new version downloads the same reader again after the restart.
 
 #include <cstdint>
 

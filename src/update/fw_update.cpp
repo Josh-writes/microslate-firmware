@@ -1,5 +1,7 @@
 #include "fw_update.h"
 
+#include "net.h"
+#include "readers.h"
 #include "../config.h"
 #include "../wifi_sync.h"
 #include "../sync/cloud_service.h"
@@ -21,12 +23,12 @@
 extern UIState currentState;
 extern bool screenDirty;
 
-// Root certificate bundle compiled into the core (as device_cloud.cpp).
-extern const uint8_t rootca_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
-extern const uint8_t rootca_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
-
 namespace fwupdate {
 namespace {
+
+using fwnet::Conn;
+using fwnet::getRedirect;
+using fwnet::setupHttp;
 
 #ifndef MS_UPDATE_REPO
 #define MS_UPDATE_REPO "https://github.com/Josh-writes/microslate-firmware"
@@ -36,6 +38,8 @@ constexpr const char* kRepo = MS_UPDATE_REPO;
 // The device part of the release file name (release.yml's matrix).
 #if defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO
 constexpr const char* kDevice = "x4pro";
+#elif defined(FREEINK_DEVICE_X4CLASSIC) && FREEINK_DEVICE_X4CLASSIC
+constexpr const char* kDevice = "x4c";
 #elif defined(FREEINK_DEVICE_E1001) && FREEINK_DEVICE_E1001
 constexpr const char* kDevice = "e1001";
 #elif defined(FREEINK_DEVICE_STICKY) && FREEINK_DEVICE_STICKY
@@ -68,51 +72,6 @@ long versionNumber(const char* v) {
   int a = 0, b = 0, c = 0;
   if (sscanf(v, "%d.%d.%d", &a, &b, &c) < 2) return 0;
   return a * 1000000L + b * 1000L + c;
-}
-
-// One connection: HTTPS with the root certificates. Debug builds also take plain http://, for a local test server
-// that stands in for GitHub (scripts/update-test-server.py); release builds only ever use https://.
-struct Conn {
-  NetworkClientSecure* tls = nullptr;
-  NetworkClient* plain = nullptr;
-  explicit Conn(const std::string& url) {
-#ifndef RELEASE_BUILD
-    if (url.compare(0, 7, "http://") == 0) {
-      plain = new NetworkClient();
-      plain->setTimeout(30);
-      return;
-    }
-#endif
-    tls = new NetworkClientSecure();
-    tls->setCACertBundle(rootca_crt_bundle_start, rootca_crt_bundle_end - rootca_crt_bundle_start);
-    tls->setTimeout(30);
-  }
-  ~Conn() { delete tls; delete plain; }
-  NetworkClient& client() { return tls ? *tls : *plain; }
-};
-
-void setupHttp(HTTPClient& http) {
-  http.setConnectTimeout(15000);
-  http.setTimeout(30000);
-  http.setReuse(false);
-  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-  static const char* keys[] = {"Location"};
-  http.collectHeaders(keys, 1);
-}
-
-// A GET whose answer is only its status and Location header (GitHub's redirects).
-int getRedirect(const std::string& url, std::string& location) {
-  Conn conn(url);
-  HTTPClient http;
-  setupHttp(http);
-  int code = -1;
-  if (http.begin(conn.client(), url.c_str())) {
-    code = http.GET();
-    if (code > 0) location = http.header("Location").c_str();
-    http.end();
-  }
-  DBG_PRINTF("[UPDATE] GET %s -> %d\n", url.c_str(), code);
-  return code;
 }
 
 std::string assetUrl() {
@@ -294,6 +253,7 @@ void key(uint8_t k) {
   if (k == HID_KEY_ESCAPE) {
     close();
   } else if (k == HID_KEY_ENTER && p == Phase::Available) {
+    readers::beforeMicroSlateUpdate();   // the update writes over the reader: the new version downloads it again
     g_pct.store(0);
     g_cancel.store(false);
     g_phase.store(Phase::Installing);

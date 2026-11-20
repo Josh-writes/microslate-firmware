@@ -8,10 +8,12 @@
 #include "keyboard_layout.h"
 #include "transfer/transfer_service.h"
 #include "update/fw_update.h"
+#include "update/readers.h"
 #include "sleep/sleep_screen.h"
 #include "spell/spell_service.h"
 #include "frontlight.h"
 #include "settings_menu.h"
+#include "ui_renderer.h"
 
 #include <HidCore.h>
 #include <Keymap.h>
@@ -781,30 +783,35 @@ static void dispatchEvent(const KeyEvent& event) {
 
   switch (currentState) {
     case UIState::MAIN_MENU: {
-      const int menuCount = 4;   // Notes, Settings, Transfer, Sync
+      MainItem items[5];
+      const int menuCount = mainMenuItems(items);   // Notes, Transfer, Sync, (the reader,) Settings
+      if (mainMenuSelection >= menuCount) mainMenuSelection = menuCount - 1;
       int act = -1;
       if (barNav(event, mainMenuSelection, menuCount, act)) break;
       if (event.keyCode == HID_KEY_ENTER) {
-        if (mainMenuSelection == 0) {
+        const MainItem item = items[mainMenuSelection];
+        if (item == MainItem::Notes) {
           refreshFileList();
           deleteSelectMode = false;
           noteMarkAll(false);
           currentState = UIState::FILE_BROWSER;
           screenDirty = true;
-        } else if (mainMenuSelection == 1) {
+        } else if (item == MainItem::Settings) {
           wifiSavedRefresh();
           settingsSelection = 1;   // the open tab's first row
           settingsForgetPending = false;
           currentState = UIState::SETTINGS;
           screenDirty = true;
-        } else if (mainMenuSelection == 2) {
+        } else if (item == MainItem::Transfer) {
           refreshFileList();
           transfer::open(nullptr, UIState::MAIN_MENU);   // all notes
           screenDirty = true;
-        } else if (mainMenuSelection == 3) {
+        } else if (item == MainItem::Sync) {
           wifiSyncStart();
           currentState = UIState::WIFI_SYNC;
           screenDirty = true;
+        } else if (item == MainItem::Reader) {
+          readers::openInstalled();   // restarts into the reader; returns only if it could not
         }
       }
       break;
@@ -1338,6 +1345,14 @@ static void dispatchEvent(const KeyEvent& event) {
       screenDirty = true;
       break;
     }
+
+    case UIState::READER:
+      // Bar: Back / Cancel (Esc), then Install / Remove / Try again / Open (Enter); on the cards, Remove last (Delete).
+      if (event.keyCode >= HID_KEY_BAR0 && event.keyCode < HID_KEY_BAR0 + 4)
+        readers::key(barKey(event.keyCode - HID_KEY_BAR0, 0, HID_KEY_DELETE));
+      else
+        readers::key(event.keyCode);
+      break;
 
     case UIState::FW_UPDATE:
       // Bar: Back (Esc), then Install / Try again (Enter).

@@ -12,6 +12,8 @@
 #include "transfer/transfer_rules.h"
 #include "transfer/transfer_service.h"
 #include "update/fw_update.h"
+#include "update/reader_logos.h"
+#include "update/readers.h"
 #include "sleep/sleep_screen.h"
 #include "input_handler.h"   // the editor menu and SD warning state
 #include "settings_menu.h"
@@ -446,7 +448,8 @@ static void drawButtonBar(GfxRenderer& r, const BarButton (&btns)[4], bool tc, i
 // "Delete this note?" and the like: the question, what it is about, an optional warning, and Cancel / the action.
 // Takes over the list area of a list screen and presents the screen.
 static void drawConfirmPrompt(GfxRenderer& r, bool tc, const ListGeom& g, const char* question, const char* subject,
-                              const char* warning, const char* action, const char* hint = nullptr) {
+                              const char* warning, const char* action, const char* hint = nullptr,
+                              const char* cancel = "Cancel") {
   const int sw = r.getScreenWidth();
   const int y = g.top + 16;
   const int subjectY = y + r.getLineHeight(LIST_FONT_L) + 14;
@@ -455,7 +458,7 @@ static void drawConfirmPrompt(GfxRenderer& r, bool tc, const ListGeom& g, const 
   drawClippedText(r, LIST_FONT_B, 20, subjectY, subject, sw - 40, tc);
   if (warning) drawClippedText(r, FONT_UI, 20, warnY, warning, sw - 40, tc);
   if (hint) drawClippedText(r, FONT_UI, 20, warnY + r.getLineHeight(FONT_UI) + 18, hint, sw - 40, tc, EpdFontFamily::BOLD);
-  const BarButton bar[4] = {{"Cancel", true}, {action, true}, {nullptr, false}, {nullptr, false}};
+  const BarButton bar[4] = {{cancel, true}, {action, true}, {nullptr, false}, {nullptr, false}};
   drawButtonBar(r, bar, tc, -1);
   r.beginRefresh(HalDisplay::FAST_REFRESH);
 }
@@ -555,6 +558,16 @@ uint8_t uiBarMask() {
 // Screen drawing functions
 // ===========================================================================
 
+int mainMenuItems(MainItem (&out)[5]) {
+  int n = 0;
+  out[n++] = MainItem::Notes;
+  out[n++] = MainItem::Transfer;
+  out[n++] = MainItem::Sync;
+  if (readers::installed()) out[n++] = MainItem::Reader;
+  out[n++] = MainItem::Settings;
+  return n;
+}
+
 void drawMainMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   renderer.clearScreen();
   const int sw = renderer.getScreenWidth();
@@ -570,29 +583,47 @@ void drawMainMenu(GfxRenderer& renderer, HalGPIO& gpio) {
     drawScreenHeader(renderer, gpio, "MicroSlate", tc);
   }
 
-  static const char* menuItems[] = {"Notes", "Settings", "Transfer", "Sync"};
-  const int menuCount = 4;
+  // With a reader in the other app slot (dual boot), it is the fourth item, above Settings, under its own name.
+  MainItem items[5];
+  const int menuCount = mainMenuItems(items);
+  auto label = [](MainItem it) -> const char* {
+    switch (it) {
+      case MainItem::Notes: return "Notes";
+      case MainItem::Reader: return readers::installed();
+      case MainItem::Transfer: return "Transfer";
+      case MainItem::Sync: return "Sync";
+      default: return "Settings";
+    }
+  };
 
-  // The keyboard status line lives under the cards; the cards scroll if they don't fit.
+  // The keyboard status line lives under the cards. When the cards do not all fit (five in landscape), they move
+  // closer, down to the size of a notes row, so each stays easy to tap; past that they scroll.
   const int statusH = 34;
-  const ListGeom g = listGeom(renderer, false, MENU_ROW_PITCH, menuCount, statusH, CLASSIC ? 48 : 0);
+  int pitch = MENU_ROW_PITCH, cardH = MENU_ROW_H;
+  if (!CLASSIC) {
+    const ListGeom fit = listGeom(renderer, false, pitch, menuCount, statusH);
+    if (fit.rows < menuCount) {
+      pitch = std::max(LIST_ROW_PITCH, (fit.bottom - fit.top + 8) / menuCount);
+      cardH = pitch - (MENU_ROW_PITCH - MENU_ROW_H);
+    }
+  }
+  const ListGeom g = listGeom(renderer, false, pitch, menuCount, statusH, CLASSIC ? 48 : 0);
 
   static ListView lv;
   viewWindow(lv, mainMenuSelection, menuCount, g.rows);
   const int start = lv.start;
   const int cw = sw - g.inset;
 
-  touchTargetsBegin(mainMenuSelection, MENU_ROW_PITCH);
+  touchTargetsBegin(mainMenuSelection, pitch);
   const int lhL = renderer.getLineHeight(LIST_FONT_L);
   for (int i = 0; i < g.rows && (start + i) < menuCount; i++) {
     const int pos = start + i;
-    const int y = g.top + i * MENU_ROW_PITCH;
-    addCardRow(pos, y, sw, MENU_ROW_PITCH, g.inset);
-    const bool ink = drawCard(renderer, tc, y, MENU_ROW_H, pos == mainMenuSelection, false, g.inset);
-    const char* label = menuItems[pos];
-    drawClippedText(renderer, LIST_FONT_L, 22, y + (MENU_ROW_H - lhL) / 2, label, cw - 50, ink);
+    const int y = g.top + i * pitch;
+    addCardRow(pos, y, sw, pitch, g.inset);
+    const bool ink = drawCard(renderer, tc, y, cardH, pos == mainMenuSelection, false, g.inset);
+    drawClippedText(renderer, LIST_FONT_L, 22, y + (cardH - lhL) / 2, label(items[pos]), cw - 50, ink);
   }
-  drawScrollbar(renderer, tc, g, MENU_ROW_PITCH, start, menuCount);
+  drawScrollbar(renderer, tc, g, pitch, start, menuCount);
 
   drawBleStatus(renderer, 14, sh - statusH + (statusH - renderer.getLineHeight(FONT_SMALL)) / 2);
   if (cloud::glyph() == cloud::Glyph::Syncing) {
@@ -2520,6 +2551,11 @@ void drawFwUpdateScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       drawClippedText(renderer, LIST_FONT_B, 20, y3, "Notes and settings stay as they are.", sw - 40, tc);
       drawClippedText(renderer, LIST_FONT_B, 20, y3 + lhB + 10, "It takes a minute or two, then the MicroSlate restarts.",
                       sw - 40, tc);
+      if (readers::installed()) {   // the update writes over the reader (dual boot)
+        char back[96];
+        snprintf(back, sizeof(back), "%s is downloaded again after the restart.", readers::installed());
+        drawClippedText(renderer, LIST_FONT_B, 20, y3 + 2 * (lhB + 10), back, sw - 40, tc);
+      }
       bar[1] = {"Install", true};
       break;
     case fwupdate::Phase::Installing:
@@ -2565,6 +2601,231 @@ void drawFwUpdateScreen(GfxRenderer& renderer, HalGPIO& gpio) {
   } else {
     drawButtonBar(renderer, bar, tc, -1);
   }
+  renderer.beginRefresh(HalDisplay::FAST_REFRESH);
+}
+
+// Word-wraps `text` into `maxW` over at most `maxLines` lines from y; with `draw` false it only counts. Returns the
+// number of lines.
+static int drawWrappedText(GfxRenderer& r, int font, int x, int y, const char* text, int maxW, int maxLines, bool ink,
+                           bool draw = true, EpdFontFamily::Style style = EpdFontFamily::REGULAR) {
+  const int lh = r.getLineHeight(font);
+  std::string line, word;
+  int lines = 0;
+  auto flush = [&]() {
+    if (line.empty()) return;
+    if (draw) drawClippedText(r, font, x, y + lines * lh, line.c_str(), maxW, ink, style);
+    lines++;
+    line.clear();
+  };
+  for (const char* c = text;; c++) {
+    if (*c && *c != ' ') { word += *c; continue; }
+    if (!word.empty()) {
+      const std::string joined = line.empty() ? word : line + " " + word;
+      if (!line.empty() && r.getTextWidth(font, joined.c_str(), style) > maxW) {
+        if (lines == maxLines - 1) { line = joined; break; }   // the last line takes the rest, cut at the edge
+        flush();
+        line = word;
+      } else {
+        line = joined;
+      }
+      word.clear();
+    }
+    if (!*c) break;
+  }
+  if (lines < maxLines) flush();
+  return lines;
+}
+
+// A reader's 120 px logo (update/reader_logos.h), pixel by pixel so it follows the screen orientation and dark mode.
+static void drawReaderLogo(GfxRenderer& r, int i, int x, int y, bool ink) {
+  const uint8_t* bits = i == 0 ? kCrossPointLogo : kCrossInkLogo;
+  constexpr int rowBytes = kReaderLogoSize / 8;
+  for (int ly = 0; ly < kReaderLogoSize; ly++)
+    for (int lx = 0; lx < kReaderLogoSize; lx++)
+      if (bits[ly * rowBytes + lx / 8] & (0x80 >> (lx % 8))) r.drawPixel(x + lx, y + ly, ink);
+}
+
+// The readers side by side as cards: logo, name, the line about it, "Installed" or "On the SD card". The outline marks the card the keys
+// are on; a tap on a card asks to install it at once (no highlight step).
+static void drawReaderCards(GfxRenderer& r, bool tc, int sel) {
+  const int sw = r.getScreenWidth();
+  const int n = readers::count();
+  const int gap = 12, pad = 12;
+  const int cardW = (sw - 16 - gap * (n - 1)) / n;
+  const int textW = cardW - 2 * pad;
+  const int lhB = r.getLineHeight(LIST_FONT_B);
+  const int lhS = r.getLineHeight(FONT_SMALL);
+  const int installedIdx = readers::installedIndex();
+  const int top = HDR_H + 12;
+
+  int blurbLines = 1;
+  for (int i = 0; i < n; i++)
+    blurbLines = std::max(blurbLines, drawWrappedText(r, FONT_SMALL, 0, 0, readers::blurb(i), textW, 4, tc, false));
+  const int cardH = pad + kReaderLogoSize + 12 + lhB + 6 + blurbLines * lhS + 10 + lhS + pad;
+
+  for (int i = 0; i < n; i++) {
+    const int x = 8 + i * (cardW + gap);
+    r.drawRect(x, top, cardW, cardH, i == sel ? 3 : 1, tc);
+    touchTargetsAddButton(static_cast<uint8_t>(HID_KEY_1 + i), x, top, cardW, cardH);
+    drawReaderLogo(r, i, x + (cardW - kReaderLogoSize) / 2, top + pad, tc);
+    int y = top + pad + kReaderLogoSize + 12;
+    const int nameW = r.getTextWidth(LIST_FONT_B, readers::name(i), EpdFontFamily::BOLD);
+    drawClippedText(r, LIST_FONT_B, x + std::max(pad, (cardW - nameW) / 2), y, readers::name(i), textW, tc,
+                    EpdFontFamily::BOLD);
+    y += lhB + 6;
+    drawWrappedText(r, FONT_SMALL, x + pad, y, readers::blurb(i), textW, 4, tc);
+    const char* tag = i == installedIdx ? "Installed" : readers::saved(i) ? "On the SD card" : nullptr;
+    if (tag) {
+      const int tagW = r.getTextWidth(FONT_SMALL, tag, EpdFontFamily::BOLD);
+      drawClippedText(r, FONT_SMALL, x + std::max(pad, (cardW - tagW) / 2), top + cardH - pad - lhS, tag, textW, tc,
+                      EpdFontFamily::BOLD);
+    }
+  }
+}
+
+// Settings > Wi-Fi > Reader (src/update/readers): the readers on offer, then install / remove, progress and Open.
+void drawReaderScreen(GfxRenderer& renderer, HalGPIO& gpio) {
+  renderer.clearScreen();
+  const int sw = renderer.getScreenWidth();
+  const bool tc = !darkMode;
+  if (darkMode) clippedFillRect(renderer, 0, 0, sw, renderer.getScreenHeight(), true);
+  drawScreenHeader(renderer, gpio, "Reader", tc);
+
+  const readers::View& v = readers::view();
+  const char* installedName = readers::installed();
+  const ListGeom g = listGeom(renderer, true, LIST_ROW_PITCH, readers::count());
+  const char* targetName = readers::name(v.target);
+
+  if (v.phase == readers::Phase::Confirm) {
+    char question[48], subject[96];
+    if (v.target < 0) {
+      snprintf(question, sizeof(question), "Remove %s?", installedName ? installedName : "the reader");
+      drawConfirmPrompt(renderer, tc, g, question, "Books and reader settings on the SD card stay.", nullptr, "Remove");
+      return;
+    }
+    const bool same = readers::installedIndex() == v.target;
+    if (same) {   // the installed reader: Check for updates
+      const char* tag = readers::installedTag();
+      snprintf(question, sizeof(question), "%s is installed", targetName);
+      if (*tag) snprintf(subject, sizeof(subject), "Release %s.", tag);
+      else snprintf(subject, sizeof(subject), "%s", readers::blurb(v.target));
+      drawConfirmPrompt(renderer, tc, g, question, subject, "Looks for a newer version over Wi-Fi.", "Update");
+      return;
+    }
+    snprintf(question, sizeof(question), "Install %s?", targetName);
+    if (installedName && !same) snprintf(subject, sizeof(subject), "It replaces %s.", installedName);
+    else snprintf(subject, sizeof(subject), "%s", readers::blurb(v.target));
+    drawConfirmPrompt(renderer, tc, g, question, subject,
+                      readers::saved(v.target)
+                          ? "Uses the copy on the SD card, or a newer download."
+                          : "Downloads about 5.5 MB and keeps a copy on the SD card.",
+                      "Install");
+    return;
+  }
+  if (v.phase == readers::Phase::KeepCopy) {   // after Remove
+    char question[64], warning[64];
+    snprintf(question, sizeof(question), "Delete %s from the SD card?", targetName);
+    snprintf(warning, sizeof(warning), "A %.1f MB copy. Deleting it cannot be undone.",
+             readers::savedBytes(v.target) / 1048576.0);
+    drawConfirmPrompt(renderer, tc, g, question, "Keep it to install again without a download.", warning, "Delete",
+                      nullptr, "Keep");
+    return;
+  }
+
+  BarButton bar[4] = {{"Back", true}, {nullptr, false}, {nullptr, false}, {nullptr, false}};
+  if (v.phase == readers::Phase::List) {
+    drawReaderCards(renderer, tc, v.sel);
+    if (installedName) bar[3] = {"Remove", true};
+    drawButtonBar(renderer, bar, tc, -1);
+    renderer.beginRefresh(HalDisplay::FAST_REFRESH);
+    return;
+  }
+
+  const int top = HDR_H + 16;
+  const int lhL = renderer.getLineHeight(LIST_FONT_L);
+  const int lhB = renderer.getLineHeight(LIST_FONT_B);
+  const int y2 = top + lhL + 12;
+  const int y3 = y2 + lhB + 10;
+  char title[64], line[96];
+  title[0] = line[0] = '\0';
+  // With a copy on the SD card, Wi-Fi is only for asking GitHub whether a newer version is out (also when the reader
+  // comes back after a MicroSlate update).
+  const bool checking = readers::saved(v.target) || v.update;
+  if (checking) snprintf(line, sizeof(line), "Looking for a newer %s first.", targetName);
+  switch (v.phase) {
+    case readers::Phase::Connecting:
+      snprintf(title, sizeof(title), checking ? "Checking for updates..." : "Connecting to Wi-Fi...");
+      break;
+    case readers::Phase::Preparing:
+      // After a MicroSlate update the reader comes back as the update's last step, not as an install of its own.
+      if (checking) snprintf(title, sizeof(title), "Checking for updates...");
+      else if (v.reinstall) snprintf(title, sizeof(title), "Finishing the update...");
+      else snprintf(title, sizeof(title), "Getting %s...", targetName);
+      bar[0] = {nullptr, false};
+      if (checking) break;
+      if (v.reinstall) snprintf(line, sizeof(line), "Bringing %s back. Keep the MicroSlate on.", targetName);
+      else snprintf(line, sizeof(line), "Making room for it. Keep the MicroSlate on.");
+      break;
+    case readers::Phase::Installing:
+      if (v.reinstall) snprintf(title, sizeof(title), "Finishing the update...  %d%%", v.pct);
+      else snprintf(title, sizeof(title), v.update ? "Updating %s...  %d%%" : "Installing %s...  %d%%", targetName, v.pct);
+      if (v.reinstall) snprintf(line, sizeof(line), "Bringing %s back. Keep the MicroSlate on.", targetName);
+      else snprintf(line, sizeof(line), "Keep the MicroSlate on until it is done.");
+      bar[0] = {nullptr, false};
+      break;
+    case readers::Phase::Saving:
+      if (v.reinstall) snprintf(title, sizeof(title), "Finishing the update...  %d%%", v.pct);
+      else snprintf(title, sizeof(title), "Saving a copy of %s...  %d%%", targetName, v.pct);
+      snprintf(line, sizeof(line), "So installing it again needs no download.");
+      bar[0] = {nullptr, false};
+      break;
+    case readers::Phase::Restoring:
+      if (v.reinstall) snprintf(title, sizeof(title), "Finishing the update...  %d%%", v.pct);
+      else snprintf(title, sizeof(title), v.update ? "Updating %s...  %d%%" : "Installing %s...  %d%%", targetName, v.pct);
+      snprintf(line, sizeof(line), "From the SD card. Keep the MicroSlate on.");
+      bar[0] = {nullptr, false};
+      break;
+    case readers::Phase::Done:
+      // A moment's notice, then the main menu (readers::loop). After a MicroSlate update it is skipped altogether.
+      snprintf(title, sizeof(title), v.update ? "%s is updated" : "%s is installed", targetName);
+      if (v.update && *readers::installedTag()) snprintf(line, sizeof(line), "Release %s.", readers::installedTag());
+      else snprintf(line, sizeof(line), "It is in the main menu. Its home screen has MicroSlate to come back.");
+      bar[0] = {nullptr, false};
+      break;
+    case readers::Phase::UpToDate:
+      snprintf(title, sizeof(title), "%s is up to date", targetName);
+      if (*readers::installedTag()) snprintf(line, sizeof(line), "Release %s is the newest.", readers::installedTag());
+      else snprintf(line, sizeof(line), "There is no newer version.");
+      bar[0] = {nullptr, false};
+      break;
+    case readers::Phase::NoWifi:
+      snprintf(title, sizeof(title), "No Wi-Fi");
+      snprintf(line, sizeof(line), "%s", v.message);
+      bar[1] = {"Try again", true};
+      break;
+    case readers::Phase::Failed:
+      snprintf(title, sizeof(title), v.update ? "%s was not updated" : "%s was not installed", targetName);
+      snprintf(line, sizeof(line), "%s", v.message);
+      bar[1] = {"Try again", true};
+      break;
+    default:
+      break;
+  }
+  if (v.reinstall && !checking && v.phase == readers::Phase::Connecting)
+    snprintf(line, sizeof(line), "Finishing the update: %s comes back next.", targetName);
+  drawClippedText(renderer, LIST_FONT_L, 20, top, title, sw - 40, tc, EpdFontFamily::BOLD);
+  drawClippedText(renderer, LIST_FONT_B, 20, y2, line, sw - 40, tc);
+  if (v.phase == readers::Phase::Installing || v.phase == readers::Phase::Saving ||
+      v.phase == readers::Phase::Restoring) {   // progress bar
+    const int bx = 20, bw = sw - 40, bh = 18;
+    const int by = y3 + 10;
+    clippedLine(renderer, bx, by, bx + bw, by, tc);
+    clippedLine(renderer, bx, by + bh, bx + bw, by + bh, tc);
+    clippedLine(renderer, bx, by, bx, by + bh, tc);
+    clippedLine(renderer, bx + bw, by, bx + bw, by + bh, tc);
+    clippedFillRect(renderer, bx, by, bw * v.pct / 100, bh, tc);
+  }
+  drawButtonBar(renderer, bar, tc, -1);
   renderer.beginRefresh(HalDisplay::FAST_REFRESH);
 }
 

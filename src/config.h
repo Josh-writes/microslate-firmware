@@ -103,7 +103,7 @@ static constexpr unsigned long AUTO_SAVE_RETRY_MS    = 5000;   // After a failed
 // The release tag is "v" + this (release.yml checks it). Settings > Wi-Fi > Firmware update compares it with the
 // latest GitHub release. A test build may set another version and MS_UPDATE_REPO (a test repository) with -D.
 #ifndef MS_FIRMWARE_VERSION
-#define MS_FIRMWARE_VERSION "3.0.4"
+#define MS_FIRMWARE_VERSION "3.0.5"
 #endif
 
 // --- Buffer/Queue Sizes ---

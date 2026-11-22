@@ -14,6 +14,7 @@
 #include "update/fw_update.h"
 #include "update/reader_logos.h"
 #include "update/readers.h"
+#include "update/update_notice.h"
 #include "sleep/sleep_screen.h"
 #include "input_handler.h"   // the editor menu and SD warning state
 #include "settings_menu.h"
@@ -478,10 +479,11 @@ static uint8_t btBarMask() {
   const int itemCount = visCount + (hidden > 0 ? 1 : 0);
   const bool scanning = isDeviceScanning();
   const bool pairing = getCurrentPasskey() > 0;
+  const bool busy = bleConnectBusy();                          // a connection is being made
   uint8_t m = 1;                                               // Back
-  if (itemCount > 0 && !pairing) m |= 2;                       // Connect / toggle
+  if (itemCount > 0 && !pairing && !busy) m |= 2;              // Connect / toggle
   if (isKeyboardConnected() && !pairing) m |= 4;               // Disconnect
-  if (!scanning && !pairing) m |= 8;                           // Scan
+  if (!scanning && !pairing && !busy) m |= 8;                  // Scan
   return m;
 }
 
@@ -625,11 +627,14 @@ void drawMainMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   }
   drawScrollbar(renderer, tc, g, pitch, start, menuCount);
 
-  drawBleStatus(renderer, 14, sh - statusH + (statusH - renderer.getLineHeight(FONT_SMALL)) / 2);
+  const int statusY = sh - statusH + (statusH - renderer.getLineHeight(FONT_SMALL)) / 2;
+  drawBleStatus(renderer, 14, statusY);
   if (cloud::glyph() == cloud::Glyph::Syncing) {
     char syncing[40];
     snprintf(syncing, sizeof(syncing), "%s syncing", cloud::providerName());
-    drawRightText(renderer, FONT_SMALL, sw - 14, sh - statusH + (statusH - renderer.getLineHeight(FONT_SMALL)) / 2, syncing, !darkMode);
+    drawRightText(renderer, FONT_SMALL, sw - 14, statusY, syncing, !darkMode);
+  } else if (updnotice::footer()[0]) {   // Check for updates found one (Settings > Wi-Fi has the rows)
+    drawRightText(renderer, FONT_SMALL, sw - 14, statusY, updnotice::footer(), !darkMode);
   }
 
   renderer.beginRefresh(HalDisplay::FAST_REFRESH);
@@ -1658,8 +1663,9 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
     if (val[0]) drawRightText(renderer, LIST_FONT_B, cw - 24, ty, val, ink, EpdFontFamily::BOLD);
   }
   drawScrollbar(renderer, tc, g, LIST_ROW_PITCH, start, rows);
-  if (settingsTab == kSettingsTabWifi && wifiSavedCount() == 0 && g.rows > 2) {
-    drawClippedText(renderer, FONT_UI, 20, g.top + 2 * LIST_ROW_PITCH + 14,
+  // Under the last row (Add a network, Firmware update, Reader, Check for updates), when there is room.
+  if (settingsTab == kSettingsTabWifi && wifiSavedCount() == 0 && g.rows > rows) {
+    drawClippedText(renderer, FONT_UI, 20, g.top + rows * LIST_ROW_PITCH + 14,
                     "No saved networks yet. Sync and Transfer use the ones added here.", sw - 40, tc);
   }
 
@@ -1820,13 +1826,16 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
 
         if (pos < visCount) {
           const int d = visIdx[pos];
-          const bool isConnected = (getCurrentDeviceAddress() == devices[d].address);
+          const bool isThis = getCurrentDeviceAddress() == devices[d].address;
+          const bool isConnecting = isThis && bleConnectBusy();
+          const bool isConnected = isThis && !isConnecting && isKeyboardConnected();
           const char* displayName = devices[d].name.empty()
                                     ? devices[d].address.c_str()
                                     : devices[d].name.c_str();
           char rightStr[24];
-          if (isConnected) snprintf(rightStr, sizeof(rightStr), "Connected");
-          else             snprintf(rightStr, sizeof(rightStr), "%ddBm", devices[d].rssi);
+          if (isConnecting)     snprintf(rightStr, sizeof(rightStr), "Connecting...");
+          else if (isConnected) snprintf(rightStr, sizeof(rightStr), "Connected");
+          else                  snprintf(rightStr, sizeof(rightStr), "%ddBm", devices[d].rssi);
           const int rightW = renderer.getTextWidth(FONT_SMALL, rightStr, EpdFontFamily::REGULAR);
           drawClippedText(renderer, LIST_FONT_B, 20, nameY, displayName, cw - 40 - rightW - 16, ink,
                           isConnected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
@@ -1859,12 +1868,13 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
 
   // Button bar: Back / Connect / Disconnect / Scan (physical X4 order).
   const bool pairing = (passkey > 0);
+  const bool busy = bleConnectBusy();
   const BarButton bar[4] = {
     {"Back", true},
     {onToggle ? (btShowAllDevices ? (kbd > 0 ? "Keyboards" : "Named") : "Show all") : "Connect",
-     itemCount > 0 && !pairing},
+     itemCount > 0 && !pairing && !busy},
     {"Disconnect", isKeyboardConnected() && !pairing},
-    {"Scan", !scanning && !pairing},
+    {"Scan", !scanning && !pairing && !busy},
   };
   drawButtonBar(renderer, bar, tc, barFocus);
 
@@ -2802,6 +2812,11 @@ void drawReaderScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       snprintf(title, sizeof(title), "No Wi-Fi");
       snprintf(line, sizeof(line), "%s", v.message);
       bar[1] = {"Try again", true};
+      break;
+    case readers::Phase::TooOld:
+      snprintf(title, sizeof(title), "%s cannot open on this screen", targetName);
+      snprintf(line, sizeof(line), "This Sticky's screen needs a newer %s. Update it over Wi-Fi.", targetName);
+      bar[1] = {"Update", true};
       break;
     case readers::Phase::Failed:
       snprintf(title, sizeof(title), v.update ? "%s was not updated" : "%s was not installed", targetName);

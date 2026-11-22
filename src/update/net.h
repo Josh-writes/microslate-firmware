@@ -3,6 +3,7 @@
 // certificates, timeouts, and GETs that report GitHub's redirects instead of following them.
 
 #include "../config.h"
+#include "../wall_clock.h"
 
 #include <HTTPClient.h>
 #include <NetworkClientSecure.h>
@@ -21,6 +22,7 @@ struct Conn {
   NetworkClientSecure* tls = nullptr;
   NetworkClient* plain = nullptr;
   explicit Conn(const std::string& url) {
+    wallclock::waitNetTurn();   // the clock's time-server lookup goes first (wall_clock.h); only ever in a task
 #ifndef RELEASE_BUILD
     if (url.compare(0, 7, "http://") == 0) {
       plain = new NetworkClient();
@@ -57,7 +59,8 @@ inline int getRedirect(const std::string& url, std::string& location, int* size 
     if (size) *size = http.getSize();
     http.end();
   }
-  DBG_PRINTF("[UPDATE] GET %s -> %d\n", url.c_str(), code);
+  DBG_PRINTF("[UPDATE] GET %s -> %d%s%s\n", url.c_str(), code, code < 0 ? " " : "",
+             code < 0 ? HTTPClient::errorToString(code).c_str() : "");
   return code;
 }
 

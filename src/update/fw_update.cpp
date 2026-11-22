@@ -2,6 +2,7 @@
 
 #include "net.h"
 #include "readers.h"
+#include "update_rules.h"
 #include "../config.h"
 #include "../wifi_sync.h"
 #include "../sync/cloud_service.h"
@@ -66,39 +67,38 @@ void finish(Phase phase, const char* message = nullptr) {
   g_phase.store(phase);
 }
 
-// "3.0.1" or "v3.0.1" -> 30001-style number; 0 when it is not a version.
-long versionNumber(const char* v) {
-  if (*v == 'v' || *v == 'V') v++;
-  int a = 0, b = 0, c = 0;
-  if (sscanf(v, "%d.%d.%d", &a, &b, &c) < 2) return 0;
-  return a * 1000000L + b * 1000L + c;
+std::string assetUrl(const char* tag) {
+  return std::string(kRepo) + "/releases/download/" + tag + "/microslate-" + kDevice + "-" + tag + ".bin";
 }
 
-std::string assetUrl() {
-  return std::string(kRepo) + "/releases/download/" + g_tag + "/microslate-" + kDevice + "-" + g_tag + ".bin";
-}
+enum class Latest : uint8_t { Failed, NoRelease, Newest, NoFile, Newer };
 
-void checkTask(void*) {
+// Asks GitHub for the latest release (blocking, in a task); `tag` becomes its tag ("v3.0.1") when there is one.
+Latest askLatest(char* tag, size_t n) {
+  tag[0] = '\0';
   std::string loc;
   const int code = getRedirect(std::string(kRepo) + "/releases/latest", loc);
   const size_t at = loc.find("/releases/tag/");
-  if (code <= 0) {
-    finish(Phase::Failed, "Could not reach GitHub. Check the Wi-Fi and try again.");
-  } else if (code != 302 || at == std::string::npos) {
-    finish(Phase::UpToDate, "No release found.");
-  } else {
-    snprintf(g_tag, sizeof(g_tag), "%s", loc.substr(at + 14).c_str());
-    snprintf(g_view.latest, sizeof(g_view.latest), "%s", g_tag[0] == 'v' ? g_tag + 1 : g_tag);
-    if (versionNumber(g_tag) <= versionNumber(MS_FIRMWARE_VERSION)) {
-      finish(Phase::UpToDate, "This is the newest version.");
-    } else {
-      // The release may have no file for this device (an X4-only release, say).
-      std::string assetLoc;
-      const int a = getRedirect(assetUrl(), assetLoc);
-      if (a == 302) finish(Phase::Available);
-      else if (a == 404) finish(Phase::UpToDate, "The newest release has no update for this device yet.");
-      else finish(Phase::Failed, "Could not reach GitHub. Check the Wi-Fi and try again.");
-    }
+  if (code <= 0) return Latest::Failed;
+  if (code != 302 || at == std::string::npos) return Latest::NoRelease;
+  snprintf(tag, n, "%s", loc.substr(at + 14).c_str());
+  if (!updrules::firmwareNewer(tag, MS_FIRMWARE_VERSION)) return Latest::Newest;
+  // The release may have no file for this device (an X4-only release, say).
+  std::string assetLoc;
+  const int a = getRedirect(assetUrl(tag), assetLoc);
+  if (a == 302) return Latest::Newer;
+  return a == 404 ? Latest::NoFile : Latest::Failed;
+}
+
+void checkTask(void*) {
+  const Latest l = askLatest(g_tag, sizeof(g_tag));
+  snprintf(g_view.latest, sizeof(g_view.latest), "%s", g_tag[0] == 'v' ? g_tag + 1 : g_tag);
+  switch (l) {
+    case Latest::Newer: finish(Phase::Available); break;
+    case Latest::Newest: finish(Phase::UpToDate, "This is the newest version."); break;
+    case Latest::NoFile: finish(Phase::UpToDate, "The newest release has no update for this device yet."); break;
+    case Latest::NoRelease: finish(Phase::UpToDate, "No release found."); break;
+    default: finish(Phase::Failed, "Could not reach GitHub. Check the Wi-Fi and try again."); break;
   }
   g_taskRunning.store(false);
   vTaskDelete(nullptr);
@@ -113,7 +113,7 @@ const char* install() {
   if (esp_partition_read(running, 0, runningHdr, sizeof(runningHdr)) != ESP_OK) return "Could not read this firmware.";
 
   std::string fileUrl;
-  if (getRedirect(assetUrl(), fileUrl) != 302 || fileUrl.empty()) return "Could not reach GitHub. Try again.";
+  if (getRedirect(assetUrl(g_tag), fileUrl) != 302 || fileUrl.empty()) return "Could not reach GitHub. Try again.";
 
   Conn conn(fileUrl);
   HTTPClient http;
@@ -227,6 +227,19 @@ void close() {
 
 const char* version() { return MS_FIRMWARE_VERSION; }
 bool supported() { return kDevice != nullptr; }
+
+int latestRelease(char* out, size_t n) {
+  if (n) out[0] = '\0';
+  if (!supported()) return 0;
+  char tag[24];
+  switch (askLatest(tag, sizeof(tag))) {
+    case Latest::Newer:
+      snprintf(out, n, "%s", tag[0] == 'v' ? tag + 1 : tag);
+      return 1;
+    case Latest::Failed: return -1;
+    default: return 0;
+  }
+}
 
 void open() {
   g_view = {};

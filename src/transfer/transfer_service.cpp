@@ -8,6 +8,7 @@
 #include "transfer_rules.h"
 #include "../file_manager.h"
 #include "../wifi_sync.h"
+#include "../update/update_notice.h"
 #include "../settings_menu.h"
 #include "../sync/cloud_service.h"
 
@@ -386,7 +387,8 @@ void stop() {
   g_phase = Phase::Off;
   wifiHold(false);
   WiFi.setSleep(true);
-  if (!cloud::wifiInUse()) wifiQuickEnd();   // a sync still running keeps Wi-Fi and switches it off when done
+  // A sync still running keeps Wi-Fi and switches it off when done; so does a Check for updates.
+  if (!cloud::wifiInUse() && !updnotice::busy()) wifiQuickEnd();
   delete[] g_list;
   g_list = nullptr;
   g_count = 0;

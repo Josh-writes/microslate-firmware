@@ -1071,13 +1071,14 @@ static void dispatchEvent(const KeyEvent& event) {
           btShowAllDevices = !btShowAllDevices;   // flip filter, reset to top
           bluetoothDeviceSelection = 0;
         } else if (visCount > 0) {
-          connectToDevice(visIdx[bluetoothDeviceSelection]);   // stops a running search first
-        } else if (!isDeviceScanning()) {
+          // A second Connect while one is being made would drop it: wait for it to end.
+          if (!bleConnectBusy()) connectToDevice(visIdx[bluetoothDeviceSelection]);   // stops a running search first
+        } else if (!isDeviceScanning() && !bleConnectBusy()) {
           startDeviceScan();   // nothing to connect to: scan instead
         }
         screenDirty = true;
       } else if (key == HID_KEY_RIGHT) {
-        if (!isDeviceScanning()) startDeviceScan();
+        if (!isDeviceScanning() && !bleConnectBusy()) startDeviceScan();
         screenDirty = true;
       } else if (key == HID_KEY_LEFT) {
         if (isKeyboardConnected()) {

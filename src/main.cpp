@@ -35,6 +35,7 @@
 #include "transfer/transfer_service.h"
 #include "update/fw_update.h"
 #include "update/readers.h"
+#include "update/update_notice.h"
 #include "editor_prof.h"
 #include "keyboard_layout.h"
 #include "frontlight.h"
@@ -689,7 +690,12 @@ void loop() {
   // the user picks. Once connected, on to the main menu.
   static bool firstPair = false;
   static std::string autoTried;
+  static bool connBusy = false;
   if (currentState == UIState::BLUETOOTH_SETTINGS) {
+    if (bleConnectBusy() != connBusy) {   // a connection started or ended: Connect, Scan and "Connecting..." follow
+      connBusy = !connBusy;
+      screenDirty = true;
+    }
     if (lastState != UIState::BLUETOOTH_SETTINGS) {
       firstPair = getPairedKeyboardCount() == 0;
       autoTried.clear();
@@ -758,6 +764,7 @@ void loop() {
   transfer::loop();
   fwupdate::loop();
   readers::loop();
+  updnotice::loop();
 
   // CRITICAL: Process buttons BEFORE checking wasAnyPressed() to avoid consuming button states
   processPhysicalButtons();
@@ -859,7 +866,7 @@ void loop() {
 
   // Check for idle timeout (skip while WiFi sync is active). Text the card does not hold (card gone, or a save that
   // failed) keeps the device awake with the warning; it tries again after another idle period.
-  if (!isWifiSyncActive() && !fwupdate::keepAwake() && !readers::keepAwake()
+  if (!isWifiSyncActive() && !fwupdate::keepAwake() && !readers::keepAwake() && !updnotice::busy()
       && millis() - lastActivityTime > IDLE_TIMEOUT) {
     if (noteLeftUnsaved()) {
       if (!editorSdWarn) showUnsavedWarning(1);

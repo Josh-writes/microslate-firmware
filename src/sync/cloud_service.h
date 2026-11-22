@@ -52,6 +52,10 @@ void flushBeforeSleep();          // bounded wait (about 30 s) so the last edit 
 // Transfer: wifiInUse() = a sync is connecting, running or keeping Wi-Fi up for a moment after one. radioTakenOver()
 // stops a sync in progress because the radio becomes a hotspot; a push that was waiting runs again later.
 bool wifiInUse();
+// Check for updates (src/update/update_notice): syncIdle() = no sync is connecting, running or lingering;
+// networkQuiet() = none is connecting or running (lingering after one is fine).
+bool syncIdle();
+bool networkQuiet();
 void radioTakenOver();
 
 // Cloud screen (the CLOUD substate of the Sync screen). The UI only draws this model.

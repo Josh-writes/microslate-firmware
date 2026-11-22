@@ -24,6 +24,7 @@ run keymap -I lib/Keymap test/keymap/test_keymap.cpp lib/Keymap/Keymap.cpp
 run sleep -I src/sleep test/sleep/test_sleep.cpp src/sleep/sleep_rules.cpp
 run spell -O1 -I src test/spell/test_spell.cpp src/spell/spell_dict.cpp
 run transfer -I src/transfer test/transfer/test_transfer.cpp src/transfer/transfer_rules.cpp
+run update -I src/update test/update/test_update_rules.cpp src/update/update_rules.cpp
 sync_src=$(ls src/sync/sync_*.cpp src/sync/onedrive*.cpp src/sync/google_drive*.cpp src/sync/dropbox*.cpp)
 for t in test/sync/test_*.cpp; do
   # shellcheck disable=SC2086

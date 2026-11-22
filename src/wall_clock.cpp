@@ -3,7 +3,10 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <Network.h>
 #include <esp_sntp.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <atomic>
 #include <sys/time.h>
 #include <esp_attr.h>
@@ -26,8 +29,34 @@ constexpr time_t kPlausible = 1767225600;   // 2026-01-01: a clock showing less 
 RTC_DATA_ATTR bool g_sysReal = false;       // the system time was real when the device went into deep sleep
 RTC_DATA_ATTR bool g_netSeen = false;       // the internet time arrived (DeviceClock::epochNow trusts only this)
 bool g_known = false;
-bool g_asked = false;                       // configTime() was called since boot
 std::atomic<bool> g_netFresh{false};
+
+// The time servers are looked up once per boot, in a task of their own, and SNTP gets their addresses: it never
+// looks a name up itself. Arduino's first lookup after Wi-Fi comes up clears lwIP's name cache without the network
+// lock; with an SNTP lookup still waiting, the clear restarted it from the caller's task and lwIP's lock check
+// rebooted the device (ms_reader, 2026-11-22). The downloads and the sync wait for this lookup (netTurn).
+enum : uint8_t { kNtpIdle, kNtpLooking, kNtpSet, kNtpFailed };
+std::atomic<uint8_t> g_ntp{kNtpIdle};
+uint32_t g_ntpRetryAt = 0;                  // millis(): after a failed lookup, the next try
+char g_ntpA[48] = "", g_ntpB[48] = "";      // the addresses SNTP was given (it keeps the pointers)
+
+void ntpTask(void*) {
+  IPAddress a, b;
+  const bool okA = Network.hostByName("pool.ntp.org", a) == 1;
+  const bool okB = Network.hostByName("time.google.com", b) == 1;
+  if (okA || okB) {
+    snprintf(g_ntpA, sizeof(g_ntpA), "%s", (okA ? a : b).toString().c_str());
+    snprintf(g_ntpB, sizeof(g_ntpB), "%s", okA && okB ? b.toString().c_str() : "");
+    configTime(0, 0, g_ntpA, g_ntpB[0] ? g_ntpB : nullptr);
+    DBG_PRINTF("[CLOCK] time servers %s %s\n", g_ntpA, g_ntpB);
+    g_ntp.store(kNtpSet);
+  } else {
+    DBG_PRINTF("[CLOCK] time servers not found\n");
+    g_ntpRetryAt = millis() + 30000;
+    g_ntp.store(kNtpFailed);
+  }
+  vTaskDelete(nullptr);
+}
 
 // SNTP's task calls this each time it sets the system clock (the first time and on its hourly checks).
 void onNetTime(struct timeval*) {
@@ -99,12 +128,31 @@ bool known() { return g_known; }
 
 bool netTimeSeen() { return g_netSeen; }
 
+void requestNetTime() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  const uint8_t s = g_ntp.load();
+  if (s == kNtpLooking || s == kNtpSet) return;
+  if (s == kNtpFailed && (int32_t)(millis() - g_ntpRetryAt) < 0) return;
+  g_ntp.store(kNtpLooking);
+  if (xTaskCreate(ntpTask, "ms_ntp", 4096, nullptr, 1, nullptr) != pdPASS) {
+    g_ntpRetryAt = millis() + 30000;
+    g_ntp.store(kNtpFailed);
+  }
+}
+
+bool netTurn() {
+  if (WiFi.status() != WL_CONNECTED) return true;
+  const uint8_t s = g_ntp.load();
+  return s == kNtpSet || s == kNtpFailed;
+}
+
+void waitNetTurn() {
+  for (int i = 0; i < 160 && !netTurn(); i++) vTaskDelay(pdMS_TO_TICKS(50));   // 8 s at most, then go anyway
+}
+
 bool poll() {
   // Any Wi-Fi connection (not the transfer hotspot) asks once per boot; SNTP keeps the time up to date after that.
-  if (!g_asked && WiFi.status() == WL_CONNECTED) {
-    configTime(0, 0, "pool.ntp.org", "time.google.com");
-    g_asked = true;
-  }
+  requestNetTime();
   if (!g_netFresh.exchange(false)) return false;
   const time_t t = time(nullptr);
   if (t <= kPlausible) return false;

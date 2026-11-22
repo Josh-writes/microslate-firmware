@@ -27,6 +27,7 @@ enum class Phase : uint8_t {
   KeepCopy,    // after Remove: keep the saved copy on the SD card, or delete it
   Done,        // installed (or updated): shown for a moment, then the main menu
   UpToDate,    // Check for updates: nothing newer than the installed release; shown for a moment, then the main menu
+  TooOld,      // the installed reader cannot drive the newer Sticky's screen (Back / Update)
   Failed       // error text
 };
 
@@ -52,7 +53,7 @@ const char* installedTag(); // the installed reader's release ("v2.0.0"), or "" 
 const char* installed();    // the installed reader's name, or nullptr (the main menu shows it when set)
 int installedIndex();       // its index in the list, or -1 (a reader from elsewhere)
 bool reinstallNeeded();     // a reader was chosen but is not in the slot (an update wrote over it, or it failed)
-void openInstalled();       // boots the reader; returns only on failure
+void openInstalled();       // boots the reader; returns only on failure, or with the TooOld screen open
 
 void settingValue(char* out, size_t n);   // the Settings row: "CrossInk", "None", "Reinstall CrossInk"
 void open();                              // the Settings row: the list

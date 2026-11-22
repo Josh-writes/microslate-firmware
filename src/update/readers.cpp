@@ -1,6 +1,7 @@
 #include "readers.h"
 
 #include "net.h"
+#include "update_rules.h"
 #include "../config.h"
 #include "../microslate_switch.h"
 #include "../sd_safe.h"
@@ -9,6 +10,7 @@
 #include "../sync/device_cloud.h"
 
 #include <Arduino.h>
+#include <HalDisplay.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <SDCardManager.h>
@@ -175,6 +177,14 @@ bool sameChip(const uint8_t* hdr) {
   return read && hdr[0] == 0xE9 && memcmp(hdr + 12, running + 12, 2) == 0;
 }
 
+// The newer Sticky's SSD2677 screen needs a reader release built for it; an older one would freeze the screen, and
+// the writer could not get back to MicroSlate without a computer.
+bool screenNeedsNewReader() {
+  const char* c = display.controllerName();
+  return c && strcmp(c, "SSD2677") == 0;
+}
+bool fitsScreen(int idx, const char* tag) { return updrules::readerFitsScreen(kReaders[idx].id, tag, screenNeedsNewReader()); }
+
 void refresh() {
   g_hasReader = msswitch::readMarker(msswitch::otherSlot(), g_marker) &&
                 strcmp(g_marker.id, msswitch::kMicroSlateId) != 0;
@@ -224,6 +234,11 @@ const char* install(int idx) {
   int total = -1;
   std::string tag;
   const int code = fwnet::resolve(url, total, &tag);
+  // The newer Sticky's screen: the latest release must drive it (also when it is the installed one, or on the card).
+  if (code == 200 && !fitsScreen(idx, tag.c_str())) {
+    DBG_PRINTF("[READER] %s %s does not drive this screen (%s)\n", r.id, tag.c_str(), display.controllerName());
+    return "This release does not support this Sticky's screen yet. Try again when a newer one is out.";
+  }
   // Check for updates: GitHub must answer, and the same release as the installed one means nothing to do.
   if (g_view.update && code == 200 && !tag.empty() && tag == g_instTag) return kUpToDate;
   if (g_view.update && code == 404) return "There is no download for this device yet.";
@@ -472,6 +487,8 @@ void restoreStep() {
     if (!slot) err = "This MicroSlate has no room for a reader.";
     else if (!c.head || !c.buf) err = "Not enough memory.";
     else if (!g_saved[idx].present || !c.file || c.total > slot->size) err = "The copy on the SD card could not be read.";
+    else if (!fitsScreen(idx, g_saved[idx].tag))
+      err = "The copy on the SD card is too old for this Sticky's screen. Connect to Wi-Fi for a newer release.";
     c.stage = 1;
     DBG_PRINTF("[READER] installing %s from the SD card (%u bytes)\n", kReaders[idx].id, (unsigned)c.total);
   } else if (c.stage == 1) {
@@ -541,6 +558,16 @@ bool reinstallNeeded() { return supported() && indexOf(g_wanted) >= 0 && !(g_has
 
 void openInstalled() {
   if (!g_hasReader) return;
+  // Installed before the check existed (3.0.4) and too old for the newer Sticky's screen: it would freeze there, so
+  // the Reader screen says so and offers its update instead. A reader from elsewhere opens (it cannot be judged).
+  const int idx = installedIndex();
+  if (idx >= 0 && !fitsScreen(idx, g_instTag)) {
+    DBG_PRINTF("[READER] %s %s does not drive this screen: not opened\n", g_marker.id, g_instTag);
+    open();
+    g_view.sel = g_view.target = idx;
+    g_phase.store(Phase::TooOld);
+    return;
+  }
   DBG_PRINTF("[READER] opening %s\n", g_marker.name);
   Serial.flush();
   msswitch::openSlot(msswitch::otherSlot());
@@ -628,6 +655,13 @@ void key(uint8_t k) {
     case Phase::KeepCopy:
       if (k == HID_KEY_ENTER) deleteSaved(g_view.target);
       if (k == HID_KEY_ESCAPE || k == HID_KEY_ENTER) toList();
+      break;
+    case Phase::TooOld:   // from the main menu: Back returns there, Update checks GitHub for a release that fits
+      if (k == HID_KEY_ESCAPE) close(true);
+      else if (k == HID_KEY_ENTER) {
+        g_view.update = true;
+        startInstall(g_view.target);
+      }
       break;
     case Phase::NoWifi:
     case Phase::Failed:
@@ -721,6 +755,7 @@ uint8_t barMask() {
     case Phase::Confirm:                  // Cancel / Install (Remove)
     case Phase::KeepCopy:                 // Keep / Delete
     case Phase::NoWifi:                   // Back / Try again
+    case Phase::TooOld:                   // Back / Update
     case Phase::Failed: return 0x3;       // Back / Try again
     default: return 0;
   }

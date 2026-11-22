@@ -6,6 +6,7 @@
 #include <HidCore.h>
 #include <algorithm>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 
 static volatile uint8_t heldModifiers = 0;   // modifier bits of the last keyboard report
 uint8_t bleHeldModifiers() { return heldModifiers; }
@@ -447,6 +448,11 @@ static class ClientCallbacks : public NimBLEClientCallbacks {
     activeConnHandle = BLE_HS_CONN_HANDLE_NONE;
     clearRoutes();
     authSuccess = false;
+    if (currentPasskey) {   // the keyboard left mid-pairing: the code goes from the screen
+      currentPasskey = 0;
+      extern bool screenDirty;
+      screenDirty = true;
+    }
     DBG_PRINTLN("[BLE] Disconnected");
     BLEDUMP("LINK down reason=0x%X (%d)", (unsigned)reason, reason);
   }
@@ -466,20 +472,19 @@ static class ClientCallbacks : public NimBLEClientCallbacks {
     return true;
   }
 
-  // Security callbacks (merged from NimBLESecurityCallbacks — removed in 2.x)
-  void onPassKeyEntry(NimBLEConnInfo& connInfo) override {
-    DBG_PRINTLN("[BLE] PassKeyEntry received - entering 123456");
-    BLEDUMP("SEC passkey entry requested -> injecting 123456");
-    NimBLEDevice::injectPassKey(connInfo, 123456);
-  }
-
-  void onConfirmPasskey(NimBLEConnInfo& connInfo, uint32_t pin) override {
-    DBG_PRINTF("[BLE] Confirm passkey: %06lu - auto-accepting\n", (unsigned long)pin);
-    BLEDUMP("SEC numeric comparison %06lu -> accepted", (unsigned long)pin);
-    currentPasskey = pin;
+  // Pairing a new keyboard: a fresh 6-digit code on the Bluetooth screen, typed on the keyboard and Enter, as
+  // Windows, macOS and Linux do. A keyboard with no keys to type on pairs without a code (the Bluetooth spec picks
+  // that from its own capabilities). The connect watchdog counts from here, so the writer has the full 30 s
+  // (the pairing's own limit) to type it.
+  uint32_t onPassKeyDisplay(NimBLEConnInfo& connInfo) override {
+    const uint32_t code = 100000 + esp_random() % 900000;   // never 0: 0 means "no code on screen"
+    DBG_PRINTF("[BLE] Pairing code %06lu shown\n", (unsigned long)code);
+    BLEDUMP("SEC passkey display %06lu", (unsigned long)code);
+    currentPasskey = code;
+    connectTaskStartMs = millis();
     extern bool screenDirty;
     screenDirty = true;
-    NimBLEDevice::injectConfirmPasskey(connInfo, true);
+    return code;
   }
 
   void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
@@ -809,7 +814,7 @@ static void runConnect() {
 
   DBG_PRINTLN("[BLE-Task] Connected, attempting security...");
 
-  // Step 2: Encrypt with the stored bond, or pair (Just Works). Blocks until the
+  // Step 2: Encrypt with the stored bond, or pair (a code on screen). Blocks until the
   // encryption result or a disconnect. NimBLE itself deletes the bond and pairs again
   // once when the keyboard says it no longer has the key.
   bool secured = pClient->secureConnection();
@@ -1175,23 +1180,15 @@ void cycleBleTxPower(int dir) {
 
 void bleSetup() {
   NimBLEDevice::init("MicroSlate");
-  // bond=true, MITM=false (we don't require it), SC=true (LE Secure Connections).
-  // Upstream offered only Legacy Pairing (SC=false); keyboards advertising BT 5.0
-  // often *require* SC and refuse Legacy outright — the GAP link comes up but
-  // pairing is rejected, so the device reports "Connected" while the keyboard
-  // sends nothing and no bond is stored. SC=true fixes that while MITM=false +
-  // NO_INPUT_OUTPUT keeps it "Just Works" (no passkey), so Logitech/Keychron etc.
-  // all still pair without prompting.
-  NimBLEDevice::setSecurityAuth(true, false, true);
-  // NO_INPUT_OUTPUT = "Just Works" pairing — works for both Logitech and Keychron
-  // since MITM=false means we never require authenticated pairing regardless of IO cap.
-  // DISPLAY_YESNO was tried for Keychron but broke Logitech (bond/security-state mismatch
-  // in NimBLE 2.x caused crashes on reconnect). Just Works is sufficient for all targets.
-  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
-  // ENC-only key distribution — omit ID (IRK) which some keyboards don't support
-  // and which caused bond-validation failures after the security param change.
-  NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC);
-  NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC);
+  // Pairing as computers do it: bond, MITM, LE Secure Connections, and a display for the code (onPassKeyDisplay).
+  // Some keyboards (the Microsoft Universal Foldable among them) refuse pairing without a code. Secure Connections
+  // stays on: keyboards advertising BT 5.0 often refuse Legacy pairing. Keys: encryption and identity both ways, so a
+  // keyboard that changes its address (its IRK) is still recognised; a keyboard that has no identity key just
+  // does not send one.
+  NimBLEDevice::setSecurityAuth(true, true, true);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+  NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+  NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
 
   // Keyboard reports are taken from the GAP event stream by handle (gapEventListener).
   NimBLEDevice::setCustomGapHandler(gapEventListener);

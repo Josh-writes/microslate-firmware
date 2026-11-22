@@ -10,6 +10,7 @@
 #include "spell/spell_service.h"
 #include "update/fw_update.h"
 #include "update/readers.h"
+#include "update/update_notice.h"
 #include "wifi_sync.h"
 
 #include <cstdio>
@@ -157,11 +158,18 @@ void myWordsOpen() {
 
 void shortcutsOpen() { editorMenu = 2; }
 
-void updateValue(char* out, size_t n) { snprintf(out, n, "v%s", fwupdate::version()); }
+// Check for updates found a newer release: the row says so (the value column is short, so no full sentence).
+void updateValue(char* out, size_t n) {
+  if (updnotice::firmware()[0]) snprintf(out, n, "Update: v%s", updnotice::firmware());
+  else snprintf(out, n, "v%s", fwupdate::version());
+}
 void updateOpen() { fwupdate::open(); }
 
 void readerValue(char* out, size_t n) { readers::settingValue(out, n); }
 void readerOpen() { readers::open(); }
+
+void checkUpdatesValue(char* out, size_t n) { snprintf(out, n, "%s", updnotice::enabled ? "On" : "Off"); }
+void checkUpdatesStep(int) { updnotice::enabled = !updnotice::enabled; }
 
 // ---- The table ----
 
@@ -225,6 +233,8 @@ constexpr Setting kEditorMenu[] = {
 constexpr Setting kUpdate = {"Firmware update", always, updateValue, nullptr, updateOpen};
 // Under it on devices with reader builds (dual boot).
 constexpr Setting kReader = {"Reader", readers::supported, readerValue, nullptr, readerOpen};
+// The last row: the daily check (on by default; it only runs with a saved network).
+constexpr Setting kCheckUpdates = {"Check for updates", fwupdate::supported, checkUpdatesValue, checkUpdatesStep, nullptr};
 
 struct Tab {
   const char* name;
@@ -252,12 +262,17 @@ int shownCount(const Setting* rows, int count) {
   return n;
 }
 
-// The Wi-Fi tab's rows are the saved networks and Add a network; only its last rows (Firmware update, Reader) are
-// Settings.
+// The Wi-Fi tab's rows are the saved networks and Add a network; only its last rows (Firmware update, Reader, Check
+// for updates) are Settings.
+constexpr const Setting* kWifiSettings[] = {&kUpdate, &kReader, &kCheckUpdates};
+
 const Setting* rowSetting(int tab, int row) {
   if (tab == kSettingsTabWifi) {
-    if (row == wifiSavedCount() + 1) return &kUpdate;
-    if (row == wifiSavedCount() + 2 && kReader.shown()) return &kReader;
+    int at = wifiSavedCount() + 1;
+    for (const Setting* s : kWifiSettings) {
+      if (!s->shown()) continue;
+      if (row == at++) return s;
+    }
     return nullptr;
   }
   if (tab < 0 || tab >= kSettingsTabCount) return nullptr;
@@ -271,8 +286,12 @@ constexpr int kEditorMenuCount = static_cast<int>(sizeof(kEditorMenu) / sizeof(k
 const char* settingsTabName(int tab) { return (tab >= 0 && tab < kSettingsTabCount) ? kTabs[tab].name : ""; }
 
 int settingsTabRows(int tab) {
-  // Saved networks, Add a network, Firmware update (, Reader).
-  if (tab == kSettingsTabWifi) return wifiSavedCount() + 2 + (kReader.shown() ? 1 : 0);
+  // Saved networks, Add a network, Firmware update (, Reader, Check for updates).
+  if (tab == kSettingsTabWifi) {
+    int n = wifiSavedCount() + 1;
+    for (const Setting* s : kWifiSettings) n += s->shown() ? 1 : 0;
+    return n;
+  }
   if (tab < 0 || tab >= kSettingsTabCount) return 0;
   return shownCount(kTabs[tab].rows, kTabs[tab].count);
 }
@@ -281,7 +300,7 @@ SettingKind settingKind(int tab, int row) {
   if (tab == kSettingsTabWifi) {
     if (row < 0 || row >= settingsTabRows(tab)) return SettingKind::None;
     if (row < wifiSavedCount()) return SettingKind::SavedWifi;
-    return row == wifiSavedCount() ? SettingKind::AddWifi : SettingKind::Opens;
+    if (row == wifiSavedCount()) return SettingKind::AddWifi;
   }
   const Setting* s = rowSetting(tab, row);
   if (!s) return SettingKind::None;

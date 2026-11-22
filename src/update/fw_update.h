@@ -8,6 +8,7 @@
 // Dual boot (src/update/readers): when a reader (CrossPoint, CrossInk) is in the other slot, the update writes over
 // it, and the new version downloads the same reader again after the restart.
 
+#include <cstddef>
 #include <cstdint>
 
 namespace fwupdate {
@@ -33,6 +34,9 @@ struct View {
 
 const char* version();   // this build, "3.0.0"
 bool supported();        // this device has release files
+// Check for updates (src/update/update_notice), blocking, from a task with Wi-Fi up: 1 when a newer release has this
+// device's file (`out` = "3.0.6"), 0 when there is nothing newer, -1 when GitHub could not be asked.
+int latestRelease(char* out, size_t n);
 
 void open();               // the Settings row: join Wi-Fi and check
 void key(uint8_t keyCode); // Enter: Install / Try again; Esc: back to Settings

@@ -7,6 +7,8 @@ class HalDisplay {
  public:
   using Controller = BoardConfig::DisplayController;
   Controller getController() const;
+  // The driver FreeInk chose at begin() ("SSD1677", "SSD2677", ...), or nullptr before it.
+  const char* controllerName() const { return einkDisplay.getControllerName(); }
 
   using GrayscaleMode = freeink::GrayscaleMode;
   using GrayscaleCapabilities = freeink::GrayscaleCapabilities;

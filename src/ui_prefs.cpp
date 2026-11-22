@@ -10,6 +10,7 @@
 #include "keyboard_layout.h"
 #include "sd_backup.h"
 #include "spell/spell_service.h"
+#include "update/update_notice.h"
 
 extern Orientation currentOrientation;
 extern bool darkMode;
@@ -46,6 +47,7 @@ const Pref kPrefs[] = {
     {"newMd", "newMd", 0, [] { return (uint8_t)newNotesMd; }, [](uint8_t v) { newNotesMd = v != 0; }},
     {"spell", "spell", 0, [] { return spellLang; }, [](uint8_t v) { spellLang = v; }},
     {"acorr", "acorr", 0, [] { return (uint8_t)autocorrectOn; }, [](uint8_t v) { autocorrectOn = v != 0; }},
+    {"updChk", "updChk", 1, [] { return (uint8_t)updnotice::enabled; }, [](uint8_t v) { updnotice::enabled = v != 0; }},
 };
 constexpr size_t kCount = sizeof(kPrefs) / sizeof(kPrefs[0]);
 

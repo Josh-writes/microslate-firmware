@@ -1,8 +1,10 @@
 #include "cloud_service.h"
+#include "../update/update_notice.h"
 
 #include "../config.h"
 #include "../file_manager.h"
 #include "../input_handler.h"
+#include "../wall_clock.h"
 #include "../wifi_sync.h"
 #include "device_cloud.h"
 #include "../diag/mem_diag.h"
@@ -116,7 +118,6 @@ bool g_runHadWrites = false; // the running sync started with an edit to push: a
 uint32_t g_lastStartMs = 0;
 uint32_t g_lingerEnd = 0;
 uint32_t g_phaseStart = 0;
-bool g_timeRequested = false;
 
 bool g_lastFailed = false;
 SyncEngine::Error g_lastError = SyncEngine::Error::None;
@@ -268,7 +269,6 @@ bool startJob(Job j) {
   memdiag::watchBegin(j == Job::SignIn ? "job: sign-in" : "job: sync");
   DBG_PRINTF("[cloud] start %s %s\n", g_provider->id(), j == Job::SignIn ? "sign-in" : "sync");
   if (WiFi.status() == WL_CONNECTED || wifiQuickBegin()) {
-    g_timeRequested = false;
     g_phase = (WiFi.status() == WL_CONNECTED) ? Phase::TimeWait : Phase::Connecting;
     dirty();
     return true;
@@ -479,7 +479,6 @@ void loop() {
       const QuickWifi q = wifiQuickPoll();
       if (q == QuickWifi::Connected) {
         g_phase = Phase::TimeWait;
-        g_timeRequested = false;
         g_phaseStart = now;
         memdiag::stage("clock check");
       }
@@ -488,8 +487,9 @@ void loop() {
     }
 
     case Phase::TimeWait:
-      if (g_clock->epochNow() > 0) { startEngine(); break; }
-      if (!g_timeRequested) { configTime(0, 0, "pool.ntp.org", "time.google.com"); g_timeRequested = true; g_phaseStart = now; }
+      // The clock's time-server lookup goes first (wall_clock.h), also when the time is known already.
+      wallclock::requestNetTime();
+      if (wallclock::netTurn() && g_clock->epochNow() > 0) { startEngine(); break; }
       if (now - g_phaseStart > kTimeWaitMs) failBeforeStart("Date not set", SyncEngine::Error::Network);
       break;
 
@@ -500,7 +500,7 @@ void loop() {
     case Phase::Linger:
       if (g_pushPending && g_signedCache && !g_screenActive && offlineWaitOver(now) &&
           (g_pushImmediate || now - g_lastStartMs >= kMinBackgroundGapMs)) { startJob(Job::Sync); break; }
-      if (now >= g_lingerEnd && !g_screenActive) teardown();
+      if (now >= g_lingerEnd && !g_screenActive && !updnotice::busy()) teardown();   // a Check for updates rides on it
       break;
   }
 
@@ -778,6 +778,8 @@ static void fillRows(ScreenModel& m) {
 }
 
 bool wifiInUse() { return g_inited && g_phase != Phase::Idle; }
+bool syncIdle() { return !g_inited || g_phase == Phase::Idle; }
+bool networkQuiet() { return !g_inited || ((g_phase == Phase::Idle || g_phase == Phase::Linger) && !g_engine->busy()); }
 
 void radioTakenOver() {
   if (!g_inited) return;
